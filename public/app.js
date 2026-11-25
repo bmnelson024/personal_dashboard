@@ -131,9 +131,12 @@ function renderAgenda() {
   el.innerHTML = html;
 }
 function renderWeek() {
-  const rows = [];
-  for (let i = 1; i <= 7; i++) {
+  const rows = [], wk = CV.weekends;
+  $('wkH').textContent = wk ? 'Next 7 days' : 'Next 5 workdays';
+  for (let i = 1, n = 0; n < (wk ? 7 : 5) && i < 14; i++) {
     const d = addDays(todayD(), i), k = keyOf(d), a = d.getTime(), b = addDays(d, 1).getTime();
+    if (!wk && (d.getDay() === 0 || d.getDay() === 6)) continue;
+    n++;
     const evs = S.events.filter(e => e.s < b && e.e > a);
     const due = openTasks().filter(t => t.due === k).length;
     const items = evs.slice(0, 6).map(e => `<li><span class="tm">${e.allDay ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
@@ -289,11 +292,11 @@ function bindRows(container, arr, rerender) {
 
 /* ---------- calendar view ---------- */
 const HH = 48;
-const CV = { view: innerWidth < 700 ? 'day' : 'week', date: todayD(), hidden: new Set(cache.get('hiddenCals') || []), store: {}, list: [], loading: false };
+const CV = { view: innerWidth < 700 ? 'day' : 'week', date: todayD(), weekends: cache.get('weekends') === true, hidden: new Set(cache.get('hiddenCals') || []), store: {}, list: [], loading: false };
 function cvRange() {
   const d = CV.date;
   if (CV.view === 'day') return [d, addDays(d, 1)];
-  if (CV.view === 'week') { const a = addDays(d, -d.getDay()); return [a, addDays(a, 7)]; }
+  if (CV.view === 'week') { if (CV.weekends) { const a = addDays(d, -d.getDay()); return [a, addDays(a, 7)]; } const a = addDays(d, -((d.getDay() + 6) % 7)); return [a, addDays(a, 5)]; }
   const first = new Date(d.getFullYear(), d.getMonth(), 1), a = addDays(first, -first.getDay());
   return [a, addDays(a, 42)];
 }
@@ -359,22 +362,26 @@ function renderTimeGrid(days) {
 }
 function renderMonth() {
   const [a] = cvRange(), evs = cvEvents(), tk = todayK(), m = CV.date.getMonth();
-  const cells = [];
+  const cells = [], ncol = CV.weekends ? 7 : 5;
   for (let i = 0; i < 42; i++) {
     const d = addDays(a, i), k = keyOf(d), s = d.getTime(), e = addDays(d, 1).getTime();
+    if (!CV.weekends && (d.getDay() === 0 || d.getDay() === 6)) continue;
+    const pos = cells.length, rc = `${pos % ncol === 0 ? ' c0' : ''}${pos < ncol ? ' r0' : ''}`;
     const day = evs.filter(x => x.s < e && x.e > s).sort((x, y) => (y.allDay - x.allDay) || x.s - y.s);
     const shown = day.slice(0, 3).map(x => evBtn(`me${x.allDay ? ' alld' : ''}`, x, `<span class="dot" style="--c:${esc(evColor(x))}"></span>${x.allDay ? '' : `<span class="tm">${esc(timeStr(x.s).replace(':00', ''))}</span>`}<span class="nm">${esc(x.title)}</span>`)).join('');
     const more = day.length > 3 ? `<button type="button" class="more" data-day="${k}"><span class="ml">${day.length - 3} more</span><span class="ms">+${day.length - 3}</span></button>` : '';
     const due = openTasks().filter(t => t.due === k).length;
-    cells.push(`<div class="mc${d.getMonth() !== m ? ' oth' : ''}${k === tk ? ' td' : ''}"><button type="button" class="dn" data-day="${k}" aria-label="${esc(d.toDateString())}">${d.getDate()}</button>${shown}${more}${due ? `<span class="mtd">${due} ${due === 1 ? 'to-do' : 'to-dos'}</span>` : ''}</div>`);
+    cells.push(`<div class="mc${rc}${d.getMonth() !== m ? ' oth' : ''}${k === tk ? ' td' : ''}"><button type="button" class="dn" data-day="${k}" aria-label="${esc(d.toDateString())}">${d.getDate()}</button>${shown}${more}${due ? `<span class="mtd">${due} ${due === 1 ? 'to-do' : 'to-dos'}</span>` : ''}</div>`);
   }
-  return `<div class="mg">${WD.map(w => `<div class="wd">${w}</div>`).join('')}${cells.join('')}</div>`;
+  const wds = CV.weekends ? WD : WD.slice(1, 6);
+  return `<div class="mg" style="grid-template-columns:repeat(${ncol},minmax(0,1fr))">${wds.map(w => `<div class="wd">${w}</div>`).join('')}${cells.join('')}</div>`;
 }
 function renderCal() {
   if ($('calView').hidden) return;
   CV.list = [];
   $('cTitle').textContent = cvTitle();
   for (const b of $('cViews').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === CV.view);
+  $('cWeekends').setAttribute('aria-pressed', CV.weekends);
   $('cLegend').innerHTML = S.cals.map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
   const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
   const errs = hit ? Object.keys(hit.errors || {}).length : 0;
@@ -382,7 +389,7 @@ function renderCal() {
   const prevScroll = $('tgScroll')?.scrollTop;
   if (CV.view === 'month') $('cBody').innerHTML = renderMonth();
   else {
-    const n = CV.view === 'day' ? 1 : 7;
+    const n = CV.view === 'day' ? 1 : CV.weekends ? 7 : 5;
     $('cBody').innerHTML = renderTimeGrid(Array.from({ length: n }, (_, i) => addDays(a, i)));
     const sc = $('tgScroll');
     if (prevScroll != null && CV.keepScroll) sc.scrollTop = prevScroll;
@@ -393,7 +400,8 @@ function renderCal() {
 function cvGo(view, date) { if (view) CV.view = view; if (date) CV.date = date; CV.keepScroll = false; cvLoad(); }
 function cvStep(dir) {
   const d = CV.date;
-  cvGo(null, CV.view === 'day' ? addDays(d, dir) : CV.view === 'week' ? addDays(d, 7 * dir) : new Date(d.getFullYear(), d.getMonth() + dir, 1));
+  let nd = addDays(d, dir); if (CV.view === 'day' && !CV.weekends) while (nd.getDay() === 0 || nd.getDay() === 6) nd = addDays(nd, dir);
+  cvGo(null, CV.view === 'day' ? nd : CV.view === 'week' ? addDays(d, 7 * dir) : new Date(d.getFullYear(), d.getMonth() + dir, 1));
 }
 function showEvent(e) {
   $('evH').textContent = e.title;
@@ -493,6 +501,7 @@ window.addEventListener('hashchange', route);
 $('cPrev').addEventListener('click', () => cvStep(-1));
 $('cNext').addEventListener('click', () => cvStep(1));
 $('cToday').addEventListener('click', () => cvGo(null, todayD()));
+$('cWeekends').addEventListener('click', () => { CV.weekends = !CV.weekends; cache.set('weekends', CV.weekends); cvGo(); renderWeek(); });
 $('cViews').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) cvGo(b.dataset.v); });
 $('cLegend').addEventListener('click', e => {
   const b = e.target.closest('[data-cal]'); if (!b) return;

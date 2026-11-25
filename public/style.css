@@ -150,8 +150,8 @@ details.done summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--m
 .mg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--rule);border-radius:8px;overflow:hidden}
 .mg .wd{padding:6px;font-size:13px;font-weight:600;color:var(--mute);border-bottom:1px solid var(--rule);text-align:center}
 .mc{min-height:118px;border-top:1px solid var(--rule);border-left:1px solid var(--rule);padding:4px;display:flex;flex-direction:column;gap:2px}
-.mc:nth-child(7n+1){border-left:0}
-.mc:nth-child(-n+14){border-top:0}
+.mc.c0{border-left:0}
+.mc.r0{border-top:0}
 .mc.oth{background:color-mix(in srgb,var(--panel) 45%,transparent)}
 .mc.oth .dn{color:var(--mute)}
 .dn{all:unset;cursor:pointer;font-weight:600;font-size:14px;width:28px;height:28px;display:grid;place-items:center;border-radius:50%}
