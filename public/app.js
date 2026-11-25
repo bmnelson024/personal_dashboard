@@ -6,7 +6,6 @@ const DEFAULT_AREAS = [
   { id: 'wo', name: 'White Oak', color: '#2e6f8e' },
   { id: 'n6', name: 'N6 Consulting', color: '#e3120b' },
   { id: 'orion', name: 'LVC Consulting', color: '#6a4fb0' },
-  { id: 're', name: 'Real estate', color: '#b4681c' },
   { id: 'fx', name: 'FolioExcel', color: '#0f8a8a' },
   { id: 'me', name: 'Personal', color: '#5b6670' }
 ];
