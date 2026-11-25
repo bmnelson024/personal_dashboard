@@ -36,16 +36,17 @@
       <p class="sum" id="sum">Loading your day…</p>
     </div>
     <div class="tools">
+      <div class="seg" role="tablist" aria-label="View"><button class="chip" type="button" id="navDash" aria-pressed="true">Dashboard</button><button class="chip" type="button" id="navCal" aria-pressed="false">Calendar</button></div>
       <button class="btn" id="refresh" type="button">Refresh calendars</button>
       <button class="btn" id="openSettings" type="button">Settings</button>
     </div>
   </div>
   <p class="banner" id="banner" hidden></p>
 </header>
-<main>
+<main id="dash">
   <div class="colL">
     <section class="sec" id="agSec" aria-labelledby="agH">
-      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note" id="calNote"></span></div>
+      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note"><span id="calNote"></span> <button class="lnk" type="button" id="expandCal">Open calendar</button></span></div>
       <div id="agenda"></div>
     </section>
     <section class="sec" id="wkSec" aria-labelledby="wkH">
@@ -70,6 +71,16 @@
     </section>
   </div>
 </main>
+<section id="calView" hidden aria-label="Calendar">
+  <div class="ctool">
+    <div class="cnav"><button class="btn" type="button" id="cPrev" aria-label="Previous">&#8249;</button><button class="btn" type="button" id="cToday">Today</button><button class="btn" type="button" id="cNext" aria-label="Next">&#8250;</button></div>
+    <h2 id="cTitle">Calendar</h2>
+    <div class="seg" id="cViews"><button class="chip" type="button" data-v="day">Day</button><button class="chip" type="button" data-v="week">Week</button><button class="chip" type="button" data-v="month">Month</button></div>
+  </div>
+  <div class="chips" id="cLegend" aria-label="Show or hide calendars"></div>
+  <p class="note" id="cStatus"></p>
+  <div id="cBody"></div>
+</section>
 </div>
 
 <div class="ov" id="edOv" role="dialog" aria-modal="true" aria-labelledby="edH">
@@ -106,6 +117,16 @@
       <div class="acts"><button class="btn" type="button" id="areaAdd">Add business</button><span class="sp"></span><button class="btn pri" type="button" id="areaSave">Save</button></div>
     </div>
     <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
+  </div>
+</div>
+
+<div class="ov" id="evOv" role="dialog" aria-modal="true" aria-labelledby="evH">
+  <div class="dlg evd">
+    <h2 id="evH"></h2>
+    <p id="evWhen"></p>
+    <p id="evLoc" class="note"></p>
+    <p id="evCal" class="note"></p>
+    <div class="acts"><button class="btn" type="button" id="evClose">Close</button></div>
   </div>
 </div>
 

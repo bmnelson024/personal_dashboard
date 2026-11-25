@@ -43,26 +43,33 @@ function timeParts(ms) {
 const timeStr = ms => timeParts(ms).join(' ');
 
 /* ---------- calendars ---------- */
+function dedupe(list) {
+  const seen = new Map();
+  for (const ev of list) {
+    const k = ev.title.toLowerCase() + '|' + ev.s + '|' + ev.e;
+    if (seen.has(k)) { const m = seen.get(k); if (!m.cals.includes(ev.cal)) m.cals.push(ev.cal); }
+    else seen.set(k, { ...ev, cals: [ev.cal] });
+  }
+  return [...seen.values()].sort((a, b) => a.s - b.s);
+}
+async function fetchEvents(from, to) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
+  const { data } = await sb.auth.getSession();
+  const r = await fetch(`/api/calendars?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`, { headers: { Authorization: 'Bearer ' + data.session.access_token } });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || 'Calendar service error ' + r.status);
+  return { events: dedupe(body.events || []), errors: body.errors || {}, at: body.fetchedAt || Date.now() };
+}
 async function refreshCalendars() {
   if (!S.session) return;
   if (!S.cals.length) { S.events = []; S.calState = 'ready'; renderAll(); return; }
   S.calState = 'loading'; renderAgenda();
   const from = todayD().getTime(), to = addDays(todayD(), 8).getTime();
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
   try {
-    const { data } = await sb.auth.getSession();
-    const r = await fetch(`/api/calendars?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`, { headers: { Authorization: 'Bearer ' + data.session.access_token } });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error || 'Calendar service error ' + r.status);
-    S.calErr = body.errors || {};
-    const seen = new Map();
-    for (const ev of body.events || []) {
-      const k = ev.title.toLowerCase() + '|' + ev.s + '|' + ev.e;
-      if (seen.has(k)) { const m = seen.get(k); if (!m.cals.includes(ev.cal)) m.cals.push(ev.cal); }
-      else { ev.cals = [ev.cal]; seen.set(k, ev); }
-    }
-    S.events = [...seen.values()];
-    S.calAt = body.fetchedAt || Date.now();
+    const res = await fetchEvents(from, to);
+    S.calErr = res.errors;
+    S.events = res.events;
+    S.calAt = res.at;
     cache.set('events', { events: S.events, at: S.calAt, day: todayK() });
     S.calState = 'ready';
   } catch (e) {
@@ -185,7 +192,7 @@ function renderAll() { renderHeader(); renderAgenda(); renderWeek(); renderChips
 const fromRow = r => ({ id: r.id, title: r.title, area: r.area ?? '', due: r.due, pri: !!r.pri, notes: r.notes || '', done: !!r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, created: r.created_at ? Date.parse(r.created_at) : Date.now() });
 const toRow = t => ({ id: t.id, title: t.title, area: t.area || null, due: t.due || null, pri: !!t.pri, notes: t.notes || '', done: !!t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null });
 function upsertLocal(t) { const i = S.tasks.findIndex(x => x.id === t.id); if (i >= 0) S.tasks[i] = t; else S.tasks.push(t); }
-function changed() { cache.set('tasks', S.tasks); renderHeader(); renderWeek(); renderChips(); renderTodos(); }
+function changed() { cache.set('tasks', S.tasks); renderHeader(); renderWeek(); renderChips(); renderTodos(); if (CV.view === 'month') renderCal(); }
 function fail(e) { console.error(e); banner('A change could not be saved. Check your connection and try again.'); loadTasks(); }
 async function loadTasks() {
   const { data, error } = await sb.from('tasks').select('*').order('created_at');
@@ -281,6 +288,131 @@ function bindRows(container, arr, rerender) {
   container.addEventListener('click', e => { const i = e.target.dataset.rm; if (i === undefined) return; arr().splice(+i, 1); rerender(); });
 }
 
+/* ---------- calendar view ---------- */
+const HH = 48;
+const CV = { view: innerWidth < 700 ? 'day' : 'week', date: todayD(), hidden: new Set(cache.get('hiddenCals') || []), store: {}, list: [], loading: false };
+function cvRange() {
+  const d = CV.date;
+  if (CV.view === 'day') return [d, addDays(d, 1)];
+  if (CV.view === 'week') { const a = addDays(d, -d.getDay()); return [a, addDays(a, 7)]; }
+  const first = new Date(d.getFullYear(), d.getMonth(), 1), a = addDays(first, -first.getDay());
+  return [a, addDays(a, 42)];
+}
+function cvTitle() {
+  const d = CV.date;
+  if (CV.view === 'day') return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  if (CV.view === 'month') return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const [a, b] = cvRange(), e = addDays(b, -1);
+  return a.getMonth() === e.getMonth() ? `${MO[a.getMonth()]} ${a.getDate()} to ${e.getDate()}, ${e.getFullYear()}` : `${MO[a.getMonth()]} ${a.getDate()} to ${MO[e.getMonth()]} ${e.getDate()}, ${e.getFullYear()}`;
+}
+async function cvLoad(force) {
+  const [a, b] = cvRange(), key = a.getTime() + '-' + b.getTime(), hit = CV.store[key];
+  if (!S.cals.length) { renderCal(); return; }
+  if (hit && !force && Date.now() - hit.at < 10 * 60000) { renderCal(); return; }
+  CV.loading = true; renderCal();
+  try { const res = await fetchEvents(a.getTime(), b.getTime()); CV.store[key] = { events: res.events, at: Date.now(), errors: res.errors }; CV.err = ''; }
+  catch (e) { CV.err = String(e.message || e); }
+  CV.loading = false; renderCal();
+}
+function cvEvents() {
+  const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
+  return (hit ? hit.events : []).filter(e => e.cals.some(c => !CV.hidden.has(c)));
+}
+const evColor = e => calById(e.cals.find(c => !CV.hidden.has(c)) || e.cal).color;
+function evBtn(cls, e, inner, style) {
+  CV.list.push(e);
+  return `<button type="button" class="${cls}" data-k="${CV.list.length - 1}" style="--c:${esc(evColor(e))};${style || ''}">${inner}</button>`;
+}
+function layoutDay(evs) {
+  // assign overlapping events to side-by-side columns
+  const out = []; let group = [], end = -1;
+  const flush = () => {
+    const cols = [];
+    for (const e of group) { let i = cols.findIndex(t => t <= e.s); if (i < 0) { i = cols.length; cols.push(0); } cols[i] = e.e; e._col = i; }
+    for (const e of group) { e._n = cols.length; out.push(e); }
+    group = []; end = -1;
+  };
+  for (const e of evs) { if (group.length && e.s >= end) flush(); group.push(e); end = Math.max(end, e.e); }
+  if (group.length) flush();
+  return out;
+}
+function renderTimeGrid(days) {
+  const evs = cvEvents(), now = Date.now(), tk = todayK();
+  const head = days.map(d => `<div class="${keyOf(d) === tk ? 'td' : ''}"><button type="button" data-day="${keyOf(d)}">${WD[d.getDay()]}<b>${d.getDate()}</b></button></div>`).join('');
+  const all = days.map(d => {
+    const a = d.getTime(), b = addDays(d, 1).getTime();
+    return `<div>${evs.filter(e => e.allDay && e.s < b && e.e > a).map(e => evBtn('ab', e, esc(e.title))).join('')}</div>`;
+  }).join('');
+  const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HH}px">${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}</span>`).join('');
+  const cols = days.map(d => {
+    const a = d.getTime(), b = addDays(d, 1).getTime();
+    const items = layoutDay(evs.filter(e => !e.allDay && e.s < b && e.e > a).map(e => ({ ...e, _s: Math.max(e.s, a), _e: Math.min(Math.max(e.e, e.s + 15 * 60000), b) })).map(e => ({ ...e, s: e._s, e: e._e, orig: e })));
+    const blocks = items.map(x => {
+      const top = (x.s - a) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
+      const w = 100 / x._n, l = x._col * w;
+      const o = x.orig;
+      return evBtn(`eb${h > 44 ? ' tall' : ''}${o.e <= now ? ' past' : ''}`, o, `<b>${esc(o.title)}</b>${h > 30 ? `${esc(timeStr(o.s))}${o.loc && h > 58 ? ' · ' + esc(o.loc) : ''}` : ''}`, `top:${top}px;height:${h}px;left:calc(${l}% + 2px);width:calc(${w}% - 4px)`);
+    }).join('');
+    const nowl = keyOf(d) === tk ? `<div class="nowl" style="top:${(now - a) / 36e5 * HH}px"></div>` : '';
+    return `<div class="dcol${keyOf(d) === tk ? ' td' : ''}">${blocks}${nowl}</div>`;
+  }).join('');
+  return `<div class="tg" style="--days:${days.length};--hh:${HH}px"><div class="tg-head"><div></div>${head}</div><div class="tg-all"><div class="lab">All day</div>${all}</div><div class="tg-scroll" id="tgScroll"><div class="tg-grid"><div class="hours">${hours}</div>${cols}</div></div></div>`;
+}
+function renderMonth() {
+  const [a] = cvRange(), evs = cvEvents(), tk = todayK(), m = CV.date.getMonth();
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(a, i), k = keyOf(d), s = d.getTime(), e = addDays(d, 1).getTime();
+    const day = evs.filter(x => x.s < e && x.e > s).sort((x, y) => (y.allDay - x.allDay) || x.s - y.s);
+    const shown = day.slice(0, 3).map(x => evBtn(`me${x.allDay ? ' alld' : ''}`, x, `<span class="dot" style="--c:${esc(evColor(x))}"></span>${x.allDay ? '' : `<span class="tm">${esc(timeStr(x.s).replace(':00', ''))}</span>`}<span class="nm">${esc(x.title)}</span>`)).join('');
+    const more = day.length > 3 ? `<button type="button" class="more" data-day="${k}"><span class="ml">${day.length - 3} more</span><span class="ms">+${day.length - 3}</span></button>` : '';
+    const due = openTasks().filter(t => t.due === k).length;
+    cells.push(`<div class="mc${d.getMonth() !== m ? ' oth' : ''}${k === tk ? ' td' : ''}"><button type="button" class="dn" data-day="${k}" aria-label="${esc(d.toDateString())}">${d.getDate()}</button>${shown}${more}${due ? `<span class="mtd">${due} ${due === 1 ? 'to-do' : 'to-dos'}</span>` : ''}</div>`);
+  }
+  return `<div class="mg">${WD.map(w => `<div class="wd">${w}</div>`).join('')}${cells.join('')}</div>`;
+}
+function renderCal() {
+  if ($('calView').hidden) return;
+  CV.list = [];
+  $('cTitle').textContent = cvTitle();
+  for (const b of $('cViews').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === CV.view);
+  $('cLegend').innerHTML = S.cals.map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
+  const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
+  const errs = hit ? Object.keys(hit.errors || {}).length : 0;
+  $('cStatus').textContent = !S.cals.length ? 'No calendars yet. Add them in Settings.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : '';
+  const prevScroll = $('tgScroll')?.scrollTop;
+  if (CV.view === 'month') $('cBody').innerHTML = renderMonth();
+  else {
+    const n = CV.view === 'day' ? 1 : 7;
+    $('cBody').innerHTML = renderTimeGrid(Array.from({ length: n }, (_, i) => addDays(a, i)));
+    const sc = $('tgScroll');
+    if (prevScroll != null && CV.keepScroll) sc.scrollTop = prevScroll;
+    else { const inRange = Date.now() >= a.getTime() && Date.now() < b.getTime(); const h = inRange ? new Date().getHours() - 1.5 : 7; sc.scrollTop = Math.max(0, h) * HH; }
+    CV.keepScroll = true;
+  }
+}
+function cvGo(view, date) { if (view) CV.view = view; if (date) CV.date = date; CV.keepScroll = false; cvLoad(); }
+function cvStep(dir) {
+  const d = CV.date;
+  cvGo(null, CV.view === 'day' ? addDays(d, dir) : CV.view === 'week' ? addDays(d, 7 * dir) : new Date(d.getFullYear(), d.getMonth() + dir, 1));
+}
+function showEvent(e) {
+  $('evH').textContent = e.title;
+  const sameDay = keyOf(new Date(e.s)) === keyOf(new Date(e.e - 1));
+  const dstr = ms => new Date(ms).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  $('evWhen').textContent = e.allDay ? (sameDay ? dstr(e.s) + ', all day' : `${dstr(e.s)} to ${dstr(e.e - 1)}, all day`) : sameDay ? `${dstr(e.s)}, ${timeStr(e.s)} to ${timeStr(e.e)}` : `${dstr(e.s)} ${timeStr(e.s)} to ${dstr(e.e)} ${timeStr(e.e)}`;
+  $('evLoc').textContent = e.loc || ''; $('evLoc').hidden = !e.loc;
+  $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.free ? ' · shown as free' : '');
+  $('evOv').classList.add('open');
+}
+function setView(v) {
+  const cal = v === 'calendar';
+  $('dash').hidden = cal; $('calView').hidden = !cal;
+  $('navDash').setAttribute('aria-pressed', !cal); $('navCal').setAttribute('aria-pressed', cal);
+  if (cal) { CV.keepScroll = false; cvLoad(); }
+}
+const route = () => setView(location.hash === '#calendar' ? 'calendar' : 'dash');
+
 /* ---------- events ---------- */
 $('addForm').addEventListener('submit', e => {
   e.preventDefault(); const raw = $('q').value; if (!raw.trim()) return;
@@ -301,6 +433,25 @@ $('edForm').addEventListener('submit', e => {
   closeEditor();
 });
 $('edCancel').addEventListener('click', closeEditor);
+$('navDash').addEventListener('click', () => { if (location.hash) history.pushState(null, '', location.pathname); route(); });
+$('navCal').addEventListener('click', () => { location.hash = 'calendar'; });
+$('expandCal').addEventListener('click', () => { location.hash = 'calendar'; });
+window.addEventListener('hashchange', route);
+$('cPrev').addEventListener('click', () => cvStep(-1));
+$('cNext').addEventListener('click', () => cvStep(1));
+$('cToday').addEventListener('click', () => cvGo(null, todayD()));
+$('cViews').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) cvGo(b.dataset.v); });
+$('cLegend').addEventListener('click', e => {
+  const b = e.target.closest('[data-cal]'); if (!b) return;
+  const id = b.dataset.cal; CV.hidden.has(id) ? CV.hidden.delete(id) : CV.hidden.add(id);
+  cache.set('hiddenCals', [...CV.hidden]); renderCal();
+});
+$('cBody').addEventListener('click', e => {
+  const ev = e.target.closest('[data-k]'); if (ev) { showEvent(CV.list[+ev.dataset.k]); return; }
+  const d = e.target.closest('[data-day]'); if (d) cvGo('day', fromKey(d.dataset.day));
+});
+$('evClose').addEventListener('click', () => $('evOv').classList.remove('open'));
+
 $('edDel').addEventListener('click', () => {
   const t = S.tasks.find(x => x.id === editing); if (!t) return;
   const copy = { ...t }; delTasks([t.id]); closeEditor();
@@ -324,7 +475,8 @@ $('calSave').addEventListener('click', async () => {
   cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
   draftCals = S.cals.map(c => ({ ...c }));
   $('calSetNote').textContent = 'Refreshing…';
-  await refreshCalendars(); renderCalRows();
+  CV.store = {};
+  await refreshCalendars(); renderCalRows(); renderCal();
   $('calSetNote').textContent = Object.keys(S.calErr).length ? 'Saved. Some calendars had problems; see above.' : 'Saved and refreshed.';
 });
 $('areaAdd').addEventListener('click', () => { draftAreas.push({ id: 'a' + Date.now().toString(36), name: 'New business', color: '#2e6f8e' }); renderAreaRows(); });
@@ -336,12 +488,15 @@ $('areaSave').addEventListener('click', async () => {
   $('setOv').classList.remove('open'); renderAll();
 });
 $('signOut').addEventListener('click', async () => { await sb.auth.signOut(); try { localStorage.clear(); } catch {} location.reload(); });
-$('refresh').addEventListener('click', () => refreshCalendars());
+$('refresh').addEventListener('click', () => { refreshCalendars(); if (!$('calView').hidden) { CV.store = {}; CV.keepScroll = true; cvLoad(true); } });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); }
+  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); $('evOv').classList.remove('open'); }
+  if (!$('calView').hidden && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !e.metaKey && !e.ctrlKey && !document.querySelector('.ov.open')) {
+    if (e.key === 'ArrowLeft') cvStep(-1); else if (e.key === 'ArrowRight') cvStep(1); else if (e.key === 't') cvGo(null, todayD()); else if (e.key === 'd') cvGo('day'); else if (e.key === 'w') cvGo('week'); else if (e.key === 'm') cvGo('month');
+  }
   if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !$('app').hidden) { e.preventDefault(); $('q').focus(); }
 });
-for (const ov of ['edOv', 'setOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
+for (const ov of ['edOv', 'setOv', 'evOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault(); $('lgErr').hidden = true;
   const { error } = await sb.auth.signInWithPassword({ email: $('lgEmail').value.trim(), password: $('lgPass').value });
@@ -360,6 +515,7 @@ async function start(session) {
   S.cals = cache.get('cals') || [];
   const ev = cache.get('events'); if (ev && ev.day === todayK()) { S.events = ev.events; S.calAt = ev.at; S.calState = 'ready'; }
   renderAll();
+  route();
   await Promise.all([loadSettings(), loadTasks()]);
   renderAll();
   refreshCalendars();
@@ -368,7 +524,7 @@ async function start(session) {
     else upsertLocal(fromRow(p.new));
     changed();
   }).subscribe();
-  setInterval(() => { renderHeader(); renderAgenda(); }, 60000);
+  setInterval(() => { renderHeader(); renderAgenda(); renderCal(); }, 60000);
   setInterval(() => refreshCalendars(), 15 * 60000);
   let lastDay = todayK();
   setInterval(() => { if (todayK() !== lastDay) { lastDay = todayK(); refreshCalendars(); } }, 60000);
