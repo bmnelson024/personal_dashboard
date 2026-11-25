@@ -354,7 +354,7 @@ function renderTimeGrid(days) {
       return evBtn(`eb${h > 44 ? ' tall' : ''}${o.e <= now ? ' past' : ''}`, o, `<b>${esc(o.title)}</b>${h > 30 ? `${esc(timeStr(o.s))}${o.loc && h > 58 ? ' · ' + esc(o.loc) : ''}` : ''}`, `top:${top}px;height:${h}px;left:calc(${l}% + 2px);width:calc(${w}% - 4px)`);
     }).join('');
     const nowl = keyOf(d) === tk ? `<div class="nowl" style="top:${(now - a) / 36e5 * HH}px"></div>` : '';
-    return `<div class="dcol${keyOf(d) === tk ? ' td' : ''}">${blocks}${nowl}</div>`;
+    return `<div class="dcol${keyOf(d) === tk ? ' td' : ''}" data-date="${keyOf(d)}" title="Click to add an event">${blocks}${nowl}</div>`;
   }).join('');
   return `<div class="tg" style="--days:${days.length};--hh:${HH}px"><div class="tg-head"><div></div>${head}</div><div class="tg-all"><div class="lab">All day</div>${all}</div><div class="tg-scroll" id="tgScroll"><div class="tg-grid"><div class="hours">${hours}</div>${cols}</div></div></div>`;
 }
@@ -413,6 +413,60 @@ function setView(v) {
 }
 const route = () => setView(location.hash === '#calendar' ? 'calendar' : 'dash');
 
+/* ---------- new event (hands off to Outlook on the web) ---------- */
+const isPersonal = c => /outlook\.live\.com|hotmail|live\.com/i.test(c.url || '');
+const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const toMin = v => { const [h, m] = (v || '0:0').split(':').map(Number); return h * 60 + m; };
+const fromMin = n => { n = ((n % 1440) + 1440) % 1440; return `${pad(Math.floor(n / 60))}:${pad(n % 60)}`; };
+function isoLocal(dateKey, time) {
+  const [y, mo, d] = dateKey.split('-').map(Number), [h, mi] = time.split(':').map(Number);
+  const dt = new Date(y, mo - 1, d, h, mi), off = -dt.getTimezoneOffset();
+  return `${dateKey}T${pad(h)}:${pad(mi)}:00${off >= 0 ? '+' : '-'}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+}
+function neHelp() {
+  const c = S.cals.find(x => x.id === $('neCal').value);
+  $('neHelp').textContent = !c ? '' : isPersonal(c)
+    ? 'Opens Outlook.com (outlook.live.com) with the event filled in. Click Save there.'
+    : `Opens Outlook on the web (outlook.office.com) with the event filled in. Check that the account in the top right is ${c.name} before you click Save.`;
+}
+function openNewEvent(start) {
+  if (!S.cals.length) { openSettings('cal'); return; }
+  const now = new Date(), d = start || new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes() < 30 ? 30 : 60);
+  $('neTitle').value = ''; $('neLoc').value = ''; $('neNotes').value = ''; $('neAll').checked = false;
+  $('neCal').innerHTML = S.cals.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  const last = cache.get('lastEvCal'); if (last && S.cals.some(c => c.id === last)) $('neCal').value = last;
+  $('neDate').value = keyOf(d); $('neStart').value = hm(d); $('neEnd').value = fromMin(toMin(hm(d)) + 60);
+  for (const el of document.querySelectorAll('.neT')) el.hidden = false;
+  neHelp(); $('neOv').classList.add('open'); setTimeout(() => $('neTitle').focus(), 0);
+}
+let neDur = 60;
+$('neStart').addEventListener('focus', () => { neDur = Math.max(15, toMin($('neEnd').value) - toMin($('neStart').value)); });
+$('neStart').addEventListener('change', () => { $('neEnd').value = fromMin(toMin($('neStart').value) + neDur); });
+$('neAll').addEventListener('change', () => { for (const el of document.querySelectorAll('.neT')) el.hidden = $('neAll').checked; });
+$('neCal').addEventListener('change', neHelp);
+$('neCancel').addEventListener('click', () => $('neOv').classList.remove('open'));
+$('neForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const c = S.cals.find(x => x.id === $('neCal').value); if (!c) return;
+  const date = $('neDate').value; if (!date) return;
+  const q = new URLSearchParams({ path: '/calendar/action/compose', rru: 'addevent', subject: $('neTitle').value.trim() });
+  if ($('neAll').checked) {
+    q.set('startdt', date); q.set('enddt', keyOf(addDays(fromKey(date), 1))); q.set('allday', 'true');
+  } else {
+    let endDate = date; if (toMin($('neEnd').value) <= toMin($('neStart').value)) endDate = keyOf(addDays(fromKey(date), 1));
+    q.set('startdt', isoLocal(date, $('neStart').value)); q.set('enddt', isoLocal(endDate, $('neEnd').value));
+  }
+  if ($('neLoc').value.trim()) q.set('location', $('neLoc').value.trim());
+  if ($('neNotes').value.trim()) q.set('body', $('neNotes').value.trim());
+  const host = isPersonal(c) ? 'https://outlook.live.com' : 'https://outlook.office.com';
+  cache.set('lastEvCal', c.id);
+  window.open(`${host}/calendar/0/deeplink/compose?${q}`, '_blank', 'noopener');
+  $('neOv').classList.remove('open');
+  toast('Opened in Outlook. Save it there; it will show here after the next refresh.');
+});
+$('cNew').addEventListener('click', () => openNewEvent(CV.view === 'day' && keyOf(CV.date) !== todayK() ? new Date(CV.date.getFullYear(), CV.date.getMonth(), CV.date.getDate(), 9) : null));
+$('addEvDash').addEventListener('click', () => openNewEvent());
+
 /* ---------- events ---------- */
 $('addForm').addEventListener('submit', e => {
   e.preventDefault(); const raw = $('q').value; if (!raw.trim()) return;
@@ -448,7 +502,8 @@ $('cLegend').addEventListener('click', e => {
 });
 $('cBody').addEventListener('click', e => {
   const ev = e.target.closest('[data-k]'); if (ev) { showEvent(CV.list[+ev.dataset.k]); return; }
-  const d = e.target.closest('[data-day]'); if (d) cvGo('day', fromKey(d.dataset.day));
+  const d = e.target.closest('[data-day]'); if (d) { cvGo('day', fromKey(d.dataset.day)); return; }
+  if (e.target.classList.contains('dcol')) { const r = e.target.getBoundingClientRect(); const mins = Math.max(0, Math.min(1410, Math.floor((e.clientY - r.top) / HH * 2) * 30)); const day = fromKey(e.target.dataset.date); openNewEvent(new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(mins / 60), mins % 60)); }
 });
 $('evClose').addEventListener('click', () => $('evOv').classList.remove('open'));
 
@@ -490,13 +545,13 @@ $('areaSave').addEventListener('click', async () => {
 $('signOut').addEventListener('click', async () => { await sb.auth.signOut(); try { localStorage.clear(); } catch {} location.reload(); });
 $('refresh').addEventListener('click', () => { refreshCalendars(); if (!$('calView').hidden) { CV.store = {}; CV.keepScroll = true; cvLoad(true); } });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); $('evOv').classList.remove('open'); }
+  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); $('evOv').classList.remove('open'); $('neOv').classList.remove('open'); }
   if (!$('calView').hidden && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !e.metaKey && !e.ctrlKey && !document.querySelector('.ov.open')) {
     if (e.key === 'ArrowLeft') cvStep(-1); else if (e.key === 'ArrowRight') cvStep(1); else if (e.key === 't') cvGo(null, todayD()); else if (e.key === 'd') cvGo('day'); else if (e.key === 'w') cvGo('week'); else if (e.key === 'm') cvGo('month');
   }
   if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !$('app').hidden) { e.preventDefault(); $('q').focus(); }
 });
-for (const ov of ['edOv', 'setOv', 'evOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
+for (const ov of ['edOv', 'setOv', 'evOv', 'neOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault(); $('lgErr').hidden = true;
   const { error } = await sb.auth.signInWithPassword({ email: $('lgEmail').value.trim(), password: $('lgPass').value });
@@ -518,6 +573,7 @@ async function start(session) {
   route();
   await Promise.all([loadSettings(), loadTasks()]);
   renderAll();
+  if (!$('calView').hidden) cvLoad();
   refreshCalendars();
   sb.channel('tasks-live').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, p => {
     if (p.eventType === 'DELETE') S.tasks = S.tasks.filter(t => t.id !== p.old.id);

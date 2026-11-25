@@ -166,3 +166,7 @@ details.done summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--m
 .mtd{font-size:12px;color:var(--slate);font-weight:500;padding:0 3px;margin-top:auto}
 .evd p{margin:0 0 6px}
 @media(max-width:600px){.mc{min-height:64px;padding:2px;flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:2px}.mc .dn{flex:none;width:24px;margin-right:calc(100% - 24px)}.more .ml{display:none}.more .ms{display:inline}.more{font-size:11px;padding:0}.me .tm,.me .nm{display:none}.me{padding:2px}.mtd{display:none}.dn{width:24px;height:24px;font-size:13px}.tg-head b{font-size:18px}.tg-grid,.tg-head,.tg-all{grid-template-columns:44px repeat(var(--days),minmax(0,1fr))}}
+.row3{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);gap:12px}
+@media(max-width:600px){.row3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.row3 .fld:first-child{grid-column:1/-1}}
+input[type=time]{font-size:16px;min-height:44px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--field);width:100%}
+.dcol{cursor:copy}

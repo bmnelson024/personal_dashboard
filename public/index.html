@@ -46,7 +46,7 @@
 <main id="dash">
   <div class="colL">
     <section class="sec" id="agSec" aria-labelledby="agH">
-      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note"><span id="calNote"></span> <button class="lnk" type="button" id="expandCal">Open calendar</button></span></div>
+      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note"><span id="calNote"></span> <button class="lnk" type="button" id="addEvDash">Add event</button> <button class="lnk" type="button" id="expandCal">Open calendar</button></span></div>
       <div id="agenda"></div>
     </section>
     <section class="sec" id="wkSec" aria-labelledby="wkH">
@@ -75,6 +75,7 @@
   <div class="ctool">
     <div class="cnav"><button class="btn" type="button" id="cPrev" aria-label="Previous">&#8249;</button><button class="btn" type="button" id="cToday">Today</button><button class="btn" type="button" id="cNext" aria-label="Next">&#8250;</button></div>
     <h2 id="cTitle">Calendar</h2>
+    <button class="btn pri" type="button" id="cNew">New event</button>
     <div class="seg" id="cViews"><button class="chip" type="button" data-v="day">Day</button><button class="chip" type="button" data-v="week">Week</button><button class="chip" type="button" data-v="month">Month</button></div>
   </div>
   <div class="chips" id="cLegend" aria-label="Show or hide calendars"></div>
@@ -128,6 +129,24 @@
     <p id="evCal" class="note"></p>
     <div class="acts"><button class="btn" type="button" id="evClose">Close</button></div>
   </div>
+</div>
+
+<div class="ov" id="neOv" role="dialog" aria-modal="true" aria-labelledby="neH">
+  <form class="dlg" id="neForm">
+    <h2 id="neH">New event</h2>
+    <label class="fld">Title<input type="text" id="neTitle" required></label>
+    <label class="fld">Calendar<select id="neCal"></select></label>
+    <label class="chkl"><input type="checkbox" id="neAll"> All day</label>
+    <div class="row3">
+      <label class="fld">Date<input type="date" id="neDate" required></label>
+      <label class="fld neT">Start<input type="time" id="neStart" step="900"></label>
+      <label class="fld neT">End<input type="time" id="neEnd" step="900"></label>
+    </div>
+    <label class="fld">Location<input type="text" id="neLoc" placeholder="Optional"></label>
+    <label class="fld">Notes<textarea id="neNotes" placeholder="Optional"></textarea></label>
+    <p class="note" id="neHelp"></p>
+    <div class="acts"><button class="btn" type="button" id="neCancel">Cancel</button><button class="btn pri" type="submit">Open in Outlook</button></div>
+  </form>
 </div>
 
 <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button type="button" id="toastUndo">Undo</button></div>
