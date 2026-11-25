@@ -228,7 +228,7 @@ async function loadSettings() {
     sb.from('settings').select('areas').maybeSingle(),
     sb.from('calendars').select('*').order('sort')
   ]);
-  if (st && Array.isArray(st.areas) && st.areas.length) S.areas = st.areas;
+  S.areas = st && Array.isArray(st.areas) && st.areas.length ? st.areas : DEFAULT_AREAS;
   if (!error) S.cals = cals.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled }));
   cache.set('areas', S.areas); cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
 }
