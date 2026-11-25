@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Day Book</title>
+<meta name="theme-color" content="#e3120b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Day Book">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="login" id="login" hidden>
+  <form id="loginForm">
+    <span class="tab">Day book</span>
+    <h1>Sign in</h1>
+    <label class="fld">Email<input type="email" id="lgEmail" autocomplete="username" required></label>
+    <label class="fld">Password<input type="password" id="lgPass" autocomplete="current-password" required></label>
+    <button class="btn pri" type="submit">Sign in</button>
+    <p class="banner" id="lgErr" hidden></p>
+  </form>
+</div>
+
+<div class="wrap" id="app" hidden>
+<header class="top">
+  <span class="tab">Day book</span>
+  <div class="hrow">
+    <div>
+      <h1 id="today">Today</h1>
+      <p class="sum" id="sum">Loading your day…</p>
+    </div>
+    <div class="tools">
+      <button class="btn" id="refresh" type="button">Refresh calendars</button>
+      <button class="btn" id="openSettings" type="button">Settings</button>
+    </div>
+  </div>
+  <p class="banner" id="banner" hidden></p>
+</header>
+<main>
+  <div class="colL">
+    <section class="sec" id="agSec" aria-labelledby="agH">
+      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note" id="calNote"></span></div>
+      <div id="agenda"></div>
+    </section>
+    <section class="sec" id="wkSec" aria-labelledby="wkH">
+      <div class="sechead"><h2 id="wkH">Next 7 days</h2></div>
+      <div id="week"></div>
+    </section>
+  </div>
+  <div class="colR">
+    <section class="sec" aria-labelledby="tdH">
+      <div class="sechead"><h2 id="tdH">To-dos</h2>
+        <div class="searchrow"><input type="search" id="search" placeholder="Search" aria-label="Search to-dos"></div>
+      </div>
+      <div class="chips" id="chips" role="toolbar" aria-label="Filter by business"></div>
+      <form class="add" id="addForm" autocomplete="off">
+        <input type="text" id="q" placeholder="Add a to-do…  (press N)" aria-label="New to-do">
+        <select id="qArea" aria-label="Business"></select>
+        <input type="date" id="qDue" aria-label="Due date">
+        <button class="btn pri" type="submit">Add</button>
+      </form>
+      <p class="hint">Shortcuts while typing: <b>#n6</b> sets the business, <b>!</b> marks it high priority, and ending with <b>today</b>, <b>tomorrow</b>, <b>fri</b> or <b>12/3</b> sets the due date.</p>
+      <div id="todos"></div>
+    </section>
+  </div>
+</main>
+</div>
+
+<div class="ov" id="edOv" role="dialog" aria-modal="true" aria-labelledby="edH">
+  <form class="dlg" id="edForm">
+    <h2 id="edH">Edit to-do</h2>
+    <label class="fld">Title<input type="text" id="edTitle" required></label>
+    <div class="row2">
+      <label class="fld">Business<select id="edArea"></select></label>
+      <label class="fld">Due<input type="date" id="edDue"></label>
+    </div>
+    <label class="chkl"><input type="checkbox" id="edPri"> High priority</label>
+    <label class="fld">Notes<textarea id="edNotes"></textarea></label>
+    <div class="acts"><button class="btn warn" type="button" id="edDel">Delete</button><span class="sp"></span><button class="btn" type="button" id="edCancel">Cancel</button><button class="btn pri" type="submit">Save</button></div>
+  </form>
+</div>
+
+<div class="ov" id="setOv" role="dialog" aria-modal="true" aria-labelledby="setH">
+  <div class="dlg">
+    <h2 id="setH">Settings</h2>
+    <div class="tabs"><button class="chip" type="button" id="tabCal" aria-pressed="true">Calendars</button><button class="chip" type="button" id="tabArea" aria-pressed="false">Businesses</button></div>
+    <div id="paneCal">
+      <div class="help"><b>Getting an Outlook calendar link.</b> Repeat for each Microsoft login (White Oak, N6, the consulting firm, personal):
+        <ol><li>Open Outlook on the web and go to Settings, then Calendar, then Shared calendars.</li>
+        <li>Under Publish a calendar, pick the calendar and choose "Can view all details".</li>
+        <li>Click Publish and copy the <b>ICS</b> link (not the HTML one). Paste it below.</li></ol>
+        If a work account has no Publish option, IT has turned it off.</div>
+      <div id="calRows"></div>
+      <div class="acts"><button class="btn" type="button" id="calAdd">Add calendar</button><span class="sp"></span><button class="btn pri" type="button" id="calSave">Save and refresh</button></div>
+      <p class="note" id="calSetNote"></p>
+    </div>
+    <div id="paneArea" hidden>
+      <p class="note">Each to-do belongs to one of these. Removing one moves its to-dos to Unfiled.</p>
+      <div id="areaRows"></div>
+      <div class="acts"><button class="btn" type="button" id="areaAdd">Add business</button><span class="sp"></span><button class="btn pri" type="button" id="areaSave">Save</button></div>
+    </div>
+    <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"><span id="toastMsg"></span><button type="button" id="toastUndo">Undo</button></div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

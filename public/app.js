@@ -1,0 +1,392 @@
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const DEFAULT_AREAS = [
+  { id: 'wo', name: 'White Oak', color: '#2e6f8e' },
+  { id: 'n6', name: 'N6 Consulting', color: '#e3120b' },
+  { id: 'orion', name: 'Orion consulting', color: '#6a4fb0' },
+  { id: 're', name: 'Real estate', color: '#b4681c' },
+  { id: 'fx', name: 'FolioExcel', color: '#0f8a8a' },
+  { id: 'me', name: 'Personal', color: '#5b6670' }
+];
+const CAL_COLORS = ['#2e6f8e', '#e3120b', '#6a4fb0', '#b4681c', '#0f8a8a', '#5b6670'];
+const S = { tasks: [], areas: DEFAULT_AREAS, filter: 'all', search: '', cals: [], events: [], calState: 'init', calErr: {}, calAt: null, tasksState: 'loading', session: null, lastArea: null };
+let sb = null;
+
+/* ---------- local cache, for instant paint and offline viewing ---------- */
+const cache = {
+  get(k) { try { return JSON.parse(localStorage.getItem('db:' + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('db:' + k, JSON.stringify(v)); } catch {} }
+};
+
+/* ---------- dates ---------- */
+const pad = n => String(n).padStart(2, '0');
+const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fromKey = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const todayD = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+const todayK = () => keyOf(todayD());
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function dueLabel(k) {
+  const diff = Math.round((fromKey(k) - todayD()) / 864e5);
+  if (diff === 0) return 'Today'; if (diff === 1) return 'Tomorrow'; if (diff === -1) return 'Yesterday';
+  const d = fromKey(k);
+  if (diff > 1 && diff < 7) return WD[d.getDay()];
+  return `${MO[d.getMonth()]} ${d.getDate()}`;
+}
+function timeParts(ms) {
+  const d = new Date(ms); let h = d.getHours(); const ap = h < 12 ? 'am' : 'pm'; h = h % 12 || 12;
+  return [`${h}:${pad(d.getMinutes())}`, ap];
+}
+const timeStr = ms => timeParts(ms).join(' ');
+
+/* ---------- calendars ---------- */
+async function refreshCalendars() {
+  if (!S.session) return;
+  if (!S.cals.length) { S.events = []; S.calState = 'ready'; renderAll(); return; }
+  S.calState = 'loading'; renderAgenda();
+  const from = todayD().getTime(), to = addDays(todayD(), 8).getTime();
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
+  try {
+    const { data } = await sb.auth.getSession();
+    const r = await fetch(`/api/calendars?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`, { headers: { Authorization: 'Bearer ' + data.session.access_token } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || 'Calendar service error ' + r.status);
+    S.calErr = body.errors || {};
+    const seen = new Map();
+    for (const ev of body.events || []) {
+      const k = ev.title.toLowerCase() + '|' + ev.s + '|' + ev.e;
+      if (seen.has(k)) { const m = seen.get(k); if (!m.cals.includes(ev.cal)) m.cals.push(ev.cal); }
+      else { ev.cals = [ev.cal]; seen.set(k, ev); }
+    }
+    S.events = [...seen.values()];
+    S.calAt = body.fetchedAt || Date.now();
+    cache.set('events', { events: S.events, at: S.calAt, day: todayK() });
+    S.calState = 'ready';
+  } catch (e) {
+    S.calState = S.events.length ? 'ready' : 'error';
+    S.calFail = String(e.message || e);
+    banner('Calendars could not refresh: ' + S.calFail);
+  }
+  renderAll();
+}
+
+/* ---------- rendering ---------- */
+const areaById = id => S.areas.find(a => a.id === id) || { id: '', name: 'Unfiled', color: '#8a949c' };
+const calById = id => S.cals.find(c => c.id === id) || { name: 'Calendar', color: '#8a949c' };
+const openTasks = () => S.tasks.filter(t => !t.done);
+function renderHeader() {
+  $('today').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const tk = todayK(), t1 = addDays(todayD(), 1).getTime();
+  const left = S.events.filter(e => !e.allDay && e.e > Date.now() && e.s < t1).length;
+  const ot = openTasks(), due = ot.filter(t => t.due === tk).length, late = ot.filter(t => t.due && t.due < tk).length;
+  const bits = [];
+  if (S.cals.length) bits.push(`<b>${left}</b> ${left === 1 ? 'meeting' : 'meetings'} left today`);
+  bits.push(`<b>${due}</b> ${due === 1 ? 'to-do' : 'to-dos'} due today`);
+  if (late) bits.push(`<b class="late">${late} overdue</b>`);
+  bits.push(`${ot.length} open in all`);
+  $('sum').innerHTML = bits.join(', ');
+  document.title = due + late ? `(${due + late}) Day Book` : 'Day Book';
+  if ('setAppBadge' in navigator) { (due + late ? navigator.setAppBadge(due + late) : navigator.clearAppBadge()).catch(() => {}); }
+}
+function evRow(ev, now) {
+  const [t, ap] = ev.allDay ? ['All', 'day'] : timeParts(ev.s);
+  const cls = ev.e <= now ? 'past' : (ev.s <= now ? 'live' : '');
+  const dots = ev.cals.map(id => `<span class="dot" style="--c:${esc(calById(id).color)}"></span>`).join('');
+  const names = ev.cals.map(id => esc(calById(id).name)).join(' + ');
+  const sub = [ev.allDay ? '' : `until ${esc(timeStr(ev.e))}`, ev.loc ? esc(ev.loc) : '', ev.free ? 'free' : ''].filter(Boolean).join(' · ');
+  return `<div class="ev ${cls}"><div class="t">${esc(t)}<small>${esc(ap)}</small></div><div><div class="ttl">${esc(ev.title)}</div><div class="sub"><span class="cals">${dots}</span>${names}${sub ? ' · ' + sub : ''}</div></div></div>`;
+}
+function renderAgenda() {
+  const el = $('agenda');
+  $('calNote').textContent = S.calAt ? `Updated ${timeStr(S.calAt)}` : '';
+  if (!S.cals.length) {
+    el.innerHTML = `<div class="empty"><p>No calendars yet. Add the ICS link from each of your Outlook calendars and they'll show here together, color-coded.</p><p><button class="btn pri" id="addCals" type="button">Add calendars</button></p></div>`;
+    $('addCals').addEventListener('click', () => openSettings('cal'));
+    return;
+  }
+  if (S.calState === 'loading' && !S.events.length) { el.innerHTML = '<p class="note">Loading calendars…</p>'; return; }
+  if (S.calState === 'error') { el.innerHTML = `<div class="empty"><p>Calendars couldn't load: ${esc(S.calFail)}</p></div>`; return; }
+  const errs = Object.keys(S.calErr).length;
+  const t0 = todayD().getTime(), t1 = addDays(todayD(), 1).getTime(), now = Date.now();
+  const day = S.events.filter(e => e.s < t1 && e.e > t0);
+  const ad = day.filter(e => e.allDay), tm = day.filter(e => !e.allDay);
+  let html = errs ? `<p class="banner">${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh. Check Settings.</p>` : '';
+  if (ad.length) html += `<div class="allday">${ad.map(e => `<span class="ad"><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span>${esc(e.title)}</span>`).join('')}</div>`;
+  if (!tm.length) html += `<div class="empty"><p>Nothing on the calendar today.</p></div>`;
+  let placed = false;
+  for (const ev of tm) {
+    if (!placed && ev.s > now) { html += `<div class="now">Now ${esc(timeStr(now))}</div>`; placed = true; }
+    html += evRow(ev, now);
+  }
+  if (!placed && tm.length) html += `<div class="now">Now ${esc(timeStr(now))}</div>`;
+  el.innerHTML = html;
+}
+function renderWeek() {
+  const rows = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = addDays(todayD(), i), k = keyOf(d), a = d.getTime(), b = addDays(d, 1).getTime();
+    const evs = S.events.filter(e => e.s < b && e.e > a);
+    const due = openTasks().filter(t => t.due === k).length;
+    const items = evs.slice(0, 6).map(e => `<li><span class="tm">${e.allDay ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
+    if (evs.length > 6) items.push(`<li class="note">${evs.length - 6} more</li>`);
+    if (due) items.push(`<li class="due">${due} ${due === 1 ? 'to-do' : 'to-dos'} due</li>`);
+    if (!items.length) items.push(`<li class="note">${S.cals.length ? 'Open' : 'No to-dos due'}</li>`);
+    rows.push(`<div class="day"><div class="dl">${WD[d.getDay()]}<span>${d.getDate()}</span></div><ul>${items.join('')}</ul></div>`);
+  }
+  $('week').innerHTML = rows.join('');
+}
+function areaOptions(sel) {
+  return S.areas.map(a => `<option value="${esc(a.id)}"${a.id === sel ? ' selected' : ''}>${esc(a.name)}</option>`).join('') + `<option value=""${sel === '' ? ' selected' : ''}>Unfiled</option>`;
+}
+function renderChips() {
+  const ot = openTasks();
+  const chip = (id, name, n, color) => `<button class="chip" type="button" data-f="${esc(id)}" aria-pressed="${S.filter === id}">${color ? `<span class="dot" style="--c:${esc(color)}"></span>` : ''}${esc(name)} <span class="n">${n}</span></button>`;
+  const list = [chip('all', 'All', ot.length)].concat(S.areas.map(a => chip(a.id, a.name, ot.filter(t => t.area === a.id).length, a.color)));
+  const unf = ot.filter(t => !S.areas.some(a => a.id === t.area)).length;
+  if (unf) list.push(chip('', 'Unfiled', unf, '#8a949c'));
+  $('chips').innerHTML = list.join('');
+  const cur = $('qArea').value;
+  $('qArea').innerHTML = areaOptions(S.filter !== 'all' ? S.filter : (cur || S.lastArea || 'me'));
+}
+function taskRow(t) {
+  const a = areaById(t.area), late = !t.done && t.due && t.due < todayK();
+  return `<li class="task${t.pri ? ' hi' : ''}${t.done ? ' done' : ''}" data-id="${esc(t.id)}"><button class="chk" type="button" data-act="toggle" aria-label="${t.done ? 'Mark not done' : 'Mark done'}: ${esc(t.title)}"></button><div class="tb"><div class="tt">${esc(t.title)}</div><div class="meta"><span class="tag"><span class="dot" style="--c:${esc(a.color)}"></span>${esc(a.name)}</span>${t.due ? `<span class="dd${late ? ' late' : ''}">${esc(dueLabel(t.due))}</span>` : ''}${t.pri && !t.done ? '<span class="flag">High</span>' : ''}${t.notes ? `<span>${esc(t.notes.split('\n')[0].slice(0, 60))}</span>` : ''}</div></div></li>`;
+}
+function renderTodos() {
+  const el = $('todos');
+  if (S.tasksState === 'loading' && !S.tasks.length) { el.innerHTML = '<p class="note">Loading to-dos…</p>'; return; }
+  const q = S.search.toLowerCase();
+  const inF = t => (S.filter === 'all' || t.area === S.filter || (S.filter === '' && !S.areas.some(a => a.id === t.area))) && (!q || (t.title + ' ' + (t.notes || '')).toLowerCase().includes(q));
+  const tk = todayK(), wk = keyOf(addDays(todayD(), 7));
+  const sort = (a, b) => (b.pri | 0) - (a.pri | 0) || (a.due || '9999').localeCompare(b.due || '9999') || (a.created || 0) - (b.created || 0);
+  const open = openTasks().filter(inF).sort(sort);
+  const groups = [
+    ['over', 'Overdue', open.filter(t => t.due && t.due < tk)],
+    ['', 'Today', open.filter(t => t.due === tk)],
+    ['', 'Next 7 days', open.filter(t => t.due && t.due > tk && t.due <= wk)],
+    ['', 'Later', open.filter(t => t.due && t.due > wk)],
+    ['', 'No date', open.filter(t => !t.due)]
+  ].filter(g => g[2].length);
+  let html = groups.map(([c, n, l]) => `<div class="grp ${c}"><h3>${n} <span class="n">${l.length}</span></h3><ul class="tasks">${l.map(taskRow).join('')}</ul></div>`).join('');
+  if (!open.length) html = `<div class="empty grp"><p>${q ? 'No to-dos match that search.' : S.tasks.length ? 'Nothing open here. Nice work.' : 'Your to-do list is empty. Type one above and press Enter; tag it with a business so it shows up under the right filter.'}</p></div>`;
+  const done = S.tasks.filter(t => t.done && inF(t)).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  if (done.length) html += `<details class="done"><summary>Completed (${done.length}) <button class="btn" type="button" id="clearDone">Clear completed</button></summary><ul class="tasks">${done.slice(0, 50).map(taskRow).join('')}</ul></details>`;
+  const wasOpen = el.querySelector('details.done')?.open;
+  el.innerHTML = html;
+  if (wasOpen) el.querySelector('details.done').open = true;
+  $('clearDone')?.addEventListener('click', ev => { ev.preventDefault(); clearDone(done); });
+}
+function renderAll() { renderHeader(); renderAgenda(); renderWeek(); renderChips(); renderTodos(); }
+
+/* ---------- data: tasks ---------- */
+const fromRow = r => ({ id: r.id, title: r.title, area: r.area ?? '', due: r.due, pri: !!r.pri, notes: r.notes || '', done: !!r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, created: r.created_at ? Date.parse(r.created_at) : Date.now() });
+const toRow = t => ({ id: t.id, title: t.title, area: t.area || null, due: t.due || null, pri: !!t.pri, notes: t.notes || '', done: !!t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null });
+function upsertLocal(t) { const i = S.tasks.findIndex(x => x.id === t.id); if (i >= 0) S.tasks[i] = t; else S.tasks.push(t); }
+function changed() { cache.set('tasks', S.tasks); renderHeader(); renderWeek(); renderChips(); renderTodos(); }
+function fail(e) { console.error(e); banner('A change could not be saved. Check your connection and try again.'); loadTasks(); }
+async function loadTasks() {
+  const { data, error } = await sb.from('tasks').select('*').order('created_at');
+  if (error) { banner('To-dos could not load: ' + error.message); return; }
+  S.tasks = data.map(fromRow); S.tasksState = 'ready'; changed();
+}
+function addTask(t) {
+  const task = { ...t, id: crypto.randomUUID(), done: false, doneAt: null, created: Date.now() };
+  upsertLocal(task); changed();
+  sb.from('tasks').insert(toRow(task)).then(({ error }) => error && fail(error));
+}
+function patchTask(id, patch) {
+  const t = S.tasks.find(x => x.id === id); if (!t) return;
+  const next = { ...t, ...patch }; upsertLocal(next); changed();
+  sb.from('tasks').update(toRow(next)).eq('id', id).then(({ error }) => error && fail(error));
+}
+function restoreTask(t) { upsertLocal(t); changed(); sb.from('tasks').upsert(toRow(t)).then(({ error }) => error && fail(error)); }
+function delTasks(ids) {
+  S.tasks = S.tasks.filter(t => !ids.includes(t.id)); changed();
+  sb.from('tasks').delete().in('id', ids).then(({ error }) => error && fail(error));
+}
+let toastT = null, undoFn = null;
+function toast(msg, undo) { $('toastMsg').textContent = msg; undoFn = undo; $('toastUndo').hidden = !undo; $('toast').classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => $('toast').classList.remove('on'), 6000); }
+function banner(msg) { const b = $('banner'); b.textContent = msg; b.hidden = !msg; clearTimeout(banner.t); if (msg) banner.t = setTimeout(() => { b.hidden = true; }, 8000); }
+function toggle(id) {
+  const t = S.tasks.find(x => x.id === id); if (!t) return;
+  const was = t.done;
+  patchTask(id, { done: !was, doneAt: !was ? Date.now() : null });
+  if (!was) toast('Marked done.', () => patchTask(id, { done: false, doneAt: null }));
+}
+function clearDone(list) {
+  const copies = list.map(t => ({ ...t }));
+  delTasks(list.map(t => t.id));
+  toast(`Cleared ${list.length} completed.`, () => copies.forEach(restoreTask));
+}
+
+/* ---------- data: settings and calendars ---------- */
+async function loadSettings() {
+  const [{ data: st }, { data: cals, error }] = await Promise.all([
+    sb.from('settings').select('areas').maybeSingle(),
+    sb.from('calendars').select('*').order('sort')
+  ]);
+  if (st && Array.isArray(st.areas) && st.areas.length) S.areas = st.areas;
+  if (!error) S.cals = cals.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled }));
+  cache.set('areas', S.areas); cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
+}
+
+/* ---------- quick add ---------- */
+function parseQuick(raw) {
+  let words = raw.trim().split(/\s+/); let area = null, pri = false, due = null;
+  words = words.filter(w => {
+    if (/^#\S+/.test(w)) { const k = w.slice(1).toLowerCase(); const a = S.areas.find(a => a.name.toLowerCase().replace(/\s+/g, '').startsWith(k) || a.id === k); if (a) { area = a.id; return false; } }
+    if (w === '!' || w === '!!') { pri = true; return false; }
+    return true;
+  });
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const dateWord = w => {
+    const l = w.toLowerCase().replace(/[.,]$/, ''), t = todayD();
+    if (l === 'today' || l === 'tod') return keyOf(t);
+    if (l === 'tomorrow' || l === 'tmr' || l === 'tom') return keyOf(addDays(t, 1));
+    const i = dayNames.indexOf(l.slice(0, 3));
+    if (i >= 0 && /^(sun|mon|tue|wed|thu|fri|sat)[a-z]*$/.test(l)) return keyOf(addDays(t, (i - t.getDay() + 7) % 7));
+    const m = l.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+    if (m) { const y = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : t.getFullYear(); let d = new Date(y, +m[1] - 1, +m[2]); if (!m[3] && d < addDays(t, -60)) d = new Date(y + 1, +m[1] - 1, +m[2]); return keyOf(d); }
+    return null;
+  };
+  while (words.length > 1) { const k = dateWord(words[words.length - 1]); if (!k) break; due = due || k; words.pop(); if (words.length > 1 && /^(on|by|due)$/i.test(words[words.length - 1])) words.pop(); }
+  return { title: words.join(' '), area, pri, due };
+}
+
+/* ---------- dialogs ---------- */
+let editing = null;
+function openEditor(id) {
+  const t = S.tasks.find(x => x.id === id); if (!t) return; editing = id;
+  $('edTitle').value = t.title; $('edArea').innerHTML = areaOptions(t.area || ''); $('edDue').value = t.due || ''; $('edPri').checked = !!t.pri; $('edNotes').value = t.notes || '';
+  $('edOv').classList.add('open'); setTimeout(() => $('edTitle').focus(), 0);
+}
+const closeEditor = () => { $('edOv').classList.remove('open'); editing = null; };
+let draftCals = [], draftAreas = [];
+async function openSettings(tab) {
+  draftCals = S.cals.map(c => ({ ...c })); draftAreas = S.areas.map(a => ({ ...a }));
+  showTab(tab || 'cal'); renderCalRows(); renderAreaRows(); $('setOv').classList.add('open');
+}
+function showTab(t) { $('tabCal').setAttribute('aria-pressed', t === 'cal'); $('tabArea').setAttribute('aria-pressed', t === 'area'); $('paneCal').hidden = t !== 'cal'; $('paneArea').hidden = t !== 'area'; }
+function renderCalRows() {
+  $('calRows').innerHTML = draftCals.map((c, i) => `<div class="crow" data-i="${i}"><input type="color" value="${esc(c.color)}" data-k="color" aria-label="Color"><div class="urls"><input type="text" value="${esc(c.name)}" data-k="name" placeholder="Name, e.g. White Oak" aria-label="Calendar name"><input type="url" value="${esc(c.url)}" data-k="url" placeholder="https://outlook.office365.com/owa/calendar/…/calendar.ics" aria-label="ICS link"><div class="st${S.calErr[c.id] ? ' err' : ''}">${S.calErr[c.id] ? esc(S.calErr[c.id]) : (c.url && S.cals.some(x => x.id === c.id) ? 'Saved' : '')}</div></div><div><label class="chkl"><input type="checkbox" data-k="on"${c.on !== false ? ' checked' : ''}> Show</label><button class="btn warn" type="button" data-rm="${i}">Remove</button></div></div>`).join('') || '<p class="note">No calendars yet.</p>';
+}
+function renderAreaRows() {
+  $('areaRows').innerHTML = draftAreas.map((a, i) => `<div class="crow" data-i="${i}"><input type="color" value="${esc(a.color)}" data-k="color" aria-label="Color"><input type="text" value="${esc(a.name)}" data-k="name" aria-label="Business name"><button class="btn warn" type="button" data-rm="${i}">Remove</button></div>`).join('');
+}
+function bindRows(container, arr, rerender) {
+  container.addEventListener('input', e => { const row = e.target.closest('.crow'); const k = e.target.dataset.k; if (!row || !k) return; arr()[+row.dataset.i][k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; });
+  container.addEventListener('click', e => { const i = e.target.dataset.rm; if (i === undefined) return; arr().splice(+i, 1); rerender(); });
+}
+
+/* ---------- events ---------- */
+$('addForm').addEventListener('submit', e => {
+  e.preventDefault(); const raw = $('q').value; if (!raw.trim()) return;
+  const p = parseQuick(raw); if (!p.title) return;
+  const area = p.area ?? $('qArea').value; S.lastArea = area;
+  addTask({ title: p.title, area, pri: p.pri, due: p.due || $('qDue').value || null, notes: '' });
+  $('q').value = ''; $('qDue').value = '';
+});
+$('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (!b) return; S.filter = b.dataset.f; renderChips(); renderTodos(); });
+$('search').addEventListener('input', e => { S.search = e.target.value; renderTodos(); });
+$('todos').addEventListener('click', e => {
+  const li = e.target.closest('.task'); if (!li) return;
+  if (e.target.closest('[data-act=toggle]')) toggle(li.dataset.id); else openEditor(li.dataset.id);
+});
+$('edForm').addEventListener('submit', e => {
+  e.preventDefault(); if (!editing) return;
+  patchTask(editing, { title: $('edTitle').value.trim() || 'Untitled', area: $('edArea').value, due: $('edDue').value || null, pri: $('edPri').checked, notes: $('edNotes').value });
+  closeEditor();
+});
+$('edCancel').addEventListener('click', closeEditor);
+$('edDel').addEventListener('click', () => {
+  const t = S.tasks.find(x => x.id === editing); if (!t) return;
+  const copy = { ...t }; delTasks([t.id]); closeEditor();
+  toast('To-do deleted.', () => restoreTask(copy));
+});
+$('toastUndo').addEventListener('click', () => { undoFn?.(); undoFn = null; $('toast').classList.remove('on'); });
+$('openSettings').addEventListener('click', () => openSettings('cal'));
+$('setClose').addEventListener('click', () => $('setOv').classList.remove('open'));
+$('tabCal').addEventListener('click', () => showTab('cal'));
+$('tabArea').addEventListener('click', () => showTab('area'));
+bindRows($('calRows'), () => draftCals, renderCalRows);
+bindRows($('areaRows'), () => draftAreas, renderAreaRows);
+$('calAdd').addEventListener('click', () => { draftCals.push({ id: crypto.randomUUID(), name: '', url: '', color: CAL_COLORS[draftCals.length % CAL_COLORS.length], on: true }); renderCalRows(); });
+$('calSave').addEventListener('click', async () => {
+  const keep = draftCals.filter(c => c.url.trim()).map((c, i) => ({ id: c.id, name: c.name.trim() || 'Calendar', url: c.url.trim(), color: c.color, enabled: c.on !== false, sort: i }));
+  const removed = S.cals.filter(c => !keep.some(k => k.id === c.id)).map(c => c.id);
+  $('calSetNote').textContent = 'Saving…';
+  if (removed.length) { const { error } = await sb.from('calendars').delete().in('id', removed); if (error) { $('calSetNote').textContent = 'Could not save: ' + error.message; return; } }
+  if (keep.length) { const { error } = await sb.from('calendars').upsert(keep); if (error) { $('calSetNote').textContent = 'Could not save: ' + error.message; return; } }
+  S.cals = keep.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled }));
+  cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
+  draftCals = S.cals.map(c => ({ ...c }));
+  $('calSetNote').textContent = 'Refreshing…';
+  await refreshCalendars(); renderCalRows();
+  $('calSetNote').textContent = Object.keys(S.calErr).length ? 'Saved. Some calendars had problems; see above.' : 'Saved and refreshed.';
+});
+$('areaAdd').addEventListener('click', () => { draftAreas.push({ id: 'a' + Date.now().toString(36), name: 'New business', color: '#2e6f8e' }); renderAreaRows(); });
+$('areaSave').addEventListener('click', async () => {
+  const areas = draftAreas.filter(a => a.name.trim()).map(a => ({ id: a.id, name: a.name.trim(), color: a.color }));
+  const { error } = await sb.from('settings').upsert({ user_id: S.session.user.id, areas, updated_at: new Date().toISOString() });
+  if (error) { banner('Businesses could not be saved: ' + error.message); return; }
+  S.areas = areas.length ? areas : DEFAULT_AREAS; cache.set('areas', S.areas);
+  $('setOv').classList.remove('open'); renderAll();
+});
+$('signOut').addEventListener('click', async () => { await sb.auth.signOut(); try { localStorage.clear(); } catch {} location.reload(); });
+$('refresh').addEventListener('click', () => refreshCalendars());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); }
+  if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !$('app').hidden) { e.preventDefault(); $('q').focus(); }
+});
+for (const ov of ['edOv', 'setOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault(); $('lgErr').hidden = true;
+  const { error } = await sb.auth.signInWithPassword({ email: $('lgEmail').value.trim(), password: $('lgPass').value });
+  if (error) { $('lgErr').textContent = error.message; $('lgErr').hidden = false; }
+});
+
+/* ---------- boot ---------- */
+let started = false;
+async function start(session) {
+  S.session = session;
+  if (!session) { $('app').hidden = true; $('login').hidden = false; return; }
+  $('login').hidden = true; $('app').hidden = false;
+  if (started) return; started = true;
+  S.tasks = cache.get('tasks') || []; if (S.tasks.length) S.tasksState = 'cached';
+  S.areas = cache.get('areas') || DEFAULT_AREAS;
+  S.cals = cache.get('cals') || [];
+  const ev = cache.get('events'); if (ev && ev.day === todayK()) { S.events = ev.events; S.calAt = ev.at; S.calState = 'ready'; }
+  renderAll();
+  await Promise.all([loadSettings(), loadTasks()]);
+  renderAll();
+  refreshCalendars();
+  sb.channel('tasks-live').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, p => {
+    if (p.eventType === 'DELETE') S.tasks = S.tasks.filter(t => t.id !== p.old.id);
+    else upsertLocal(fromRow(p.new));
+    changed();
+  }).subscribe();
+  setInterval(() => { renderHeader(); renderAgenda(); }, 60000);
+  setInterval(() => refreshCalendars(), 15 * 60000);
+  let lastDay = todayK();
+  setInterval(() => { if (todayK() !== lastDay) { lastDay = todayK(); refreshCalendars(); } }, 60000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { loadTasks(); if (Date.now() - (S.calAt || 0) > 5 * 60000) refreshCalendars(); } });
+}
+
+(async () => {
+  try {
+    const r = await fetch('/api/config');
+    const cfg = await r.json();
+    if (!r.ok) throw new Error(cfg.error || 'Config missing');
+    sb = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
+  } catch (e) {
+    document.body.innerHTML = `<div class="login"><div><span class="tab">Day book</span><h1>Setup needed</h1><p>${esc(e.message)}</p></div></div>`;
+    return;
+  }
+  const { data } = await sb.auth.getSession();
+  start(data.session);
+  sb.auth.onAuthStateChange((_ev, session) => start(session));
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+})();
