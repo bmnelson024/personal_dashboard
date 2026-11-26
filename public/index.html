@@ -137,7 +137,11 @@
       <div id="areaRows"></div>
       <div class="acts"><button class="btn" type="button" id="areaAdd">Add business</button><span class="sp"></span><button class="btn pri" type="button" id="areaSave">Save</button></div>
     </div>
-    <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><button class="btn" type="button" id="backup">Download backup</button><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
+    <div class="restore" id="restoreBox" hidden>
+      <p id="restoreMsg"></p>
+      <div class="acts" style="justify-content:flex-start"><button class="btn pri" type="button" id="restoreGo">Restore</button><button class="btn" type="button" id="restoreCancel">Cancel</button></div>
+    </div>
+    <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><button class="btn" type="button" id="backup">Download backup</button><button class="btn" type="button" id="restore">Restore from backup</button><input type="file" id="restoreFile" accept=".json,application/json" hidden><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
   </div>
 </div>
 

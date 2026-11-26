@@ -10,7 +10,7 @@ Brian's personal dashboard: to-dos for every business plus personal, all of his 
 - **Personal calendar:** stored in Day Book, with weekly repeats, skip one date, and a private subscribe link for your phone, Outlook, Google or the Skylight.
 - **To-dos:** repeating to-dos (daily to yearly), high priority, notes, undo, and Block time to put a to-do on the calendar.
 - **New events for Outlook calendars:** fill in the event in Day Book and it opens in the right Outlook account to save.
-- **Backup:** Settings > Download backup saves everything as a JSON file.
+- **Backup:** Settings > Download backup saves everything as a JSON file; Restore from backup adds back anything missing and returns changed items to how they were (it never deletes).
 
 ## How it's built
 - **Front end:** plain HTML, CSS and JavaScript in `public/`. No build step. The Supabase library is a bundled copy in `public/vendor/` so the app doesn't depend on a public CDN and can open offline.

@@ -769,6 +769,37 @@ $('backup').addEventListener('click', async () => {
   toast(`Backup downloaded: ${data.tasks.length} to-dos, ${data.personal_events.length} personal events. It includes your calendar links, so keep the file private.`);
 });
 
+// Restore: adds or updates rows from a backup file. Nothing that exists now is deleted.
+let restoreData = null;
+$('restore').addEventListener('click', () => { $('restoreFile').value = ''; $('restoreFile').click(); });
+$('restoreFile').addEventListener('change', async () => {
+  const f = $('restoreFile').files[0]; if (!f) return;
+  let d; try { d = JSON.parse(await f.text()); } catch { d = null; }
+  const box = $('restoreBox'); box.hidden = false;
+  if (!d || d.app !== 'Day Book' || !Array.isArray(d.tasks)) { restoreData = null; $('restoreMsg').textContent = 'That file is not a Day Book backup.'; $('restoreGo').hidden = true; return; }
+  restoreData = d; $('restoreGo').hidden = false;
+  const when = d.exported ? new Date(d.exported).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'an unknown date';
+  $('restoreMsg').textContent = `Backup from ${when}: ${d.tasks.length} to-dos, ${(d.personal_events || []).length} personal events, ${(d.calendars || []).length} calendars${d.settings ? ', and your businesses' : ''}. Restoring adds anything missing and puts changed items back the way they were in the backup. Nothing you have now is deleted.`;
+});
+$('restoreCancel').addEventListener('click', () => { restoreData = null; $('restoreBox').hidden = true; });
+$('restoreGo').addEventListener('click', async () => {
+  const d = restoreData; if (!d) return;
+  const uid = S.session.user.id, mine = r => ({ ...r, user_id: uid }); // works even if restored into a new account
+  $('restoreGo').disabled = true; $('restoreMsg').textContent = 'Restoring…';
+  const steps = [['tasks', d.tasks], ['personal_events', d.personal_events || []], ['calendars', d.calendars || []]];
+  try {
+    for (const [table, rows] of steps) for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await sb.from(table).upsert(rows.slice(i, i + 500).map(mine));
+      if (error) throw new Error(`${table}: ${error.message}`);
+    }
+    if (d.settings) { const { error } = await sb.from('settings').upsert(mine(d.settings)); if (error) throw new Error('settings: ' + error.message); }
+  } catch (e) { $('restoreMsg').textContent = 'Restore stopped: ' + e.message + '. Anything before that point was restored.'; $('restoreGo').disabled = false; return; }
+  $('restoreGo').disabled = false; $('restoreBox').hidden = true; restoreData = null;
+  await Promise.all([loadSettings(), loadTasks(), loadPersonal()]);
+  rebuildEvents(); CV.store = {}; renderAll(); refreshCalendars(); $('setOv').classList.remove('open');
+  toast('Backup restored.');
+});
+
 /* ---------- events ---------- */
 $('addForm').addEventListener('submit', e => {
   e.preventDefault(); const raw = $('q').value; if (!raw.trim()) return;

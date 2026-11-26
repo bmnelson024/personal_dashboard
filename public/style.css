@@ -213,3 +213,5 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .feed{border-top:1px solid var(--rule);margin-top:16px;padding-top:12px}
 .feed h3{font-size:16px;margin:0 0 4px}
 #feedUrl{width:100%;font-size:14px;margin:6px 0}
+.restore{background:var(--panel);border-radius:6px;padding:10px 14px;margin-top:12px;font-size:14px}
+.restore p{margin:0 0 6px}
