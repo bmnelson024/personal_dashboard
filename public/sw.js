@@ -1,6 +1,6 @@
 // App shell cache so the dashboard opens instantly and works offline.
 // Data calls (/api, Supabase) always go to the network.
-const VERSION = 'daybook-v23';
+const VERSION = 'daybook-v24';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/vendor/supabase-2.45.4.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -11,7 +11,7 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/.netlify/')) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/cal/') || url.pathname.startsWith('/.netlify/')) return;
   e.respondWith(
     fetch(e.request).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }

@@ -22,9 +22,9 @@ const vtimezone = tz => {
   out.push('END:VTIMEZONE');
   return out;
 };
-const text = v => String(v || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
-const d8 = iso => iso.replace(/-/g, '');                     // 2026-12-01 -> 20261201
-const t6 = hm => (hm || '00:00').replace(':', '') + '00';    // 18:30 -> 183000
+const text = v => String(v || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r\n|\r|\n/g, '\\n');
+const d8 = iso => String(iso).slice(0, 10).replace(/[^0-9]/g, '');  // 2026-12-01 -> 20261201
+const t6 = hm => (/^([01]\d|2[0-3]):[0-5]\d$/.test(hm || '') ? hm : '09:00').replace(':', '') + '00';    // 18:30 -> 183000
 const addDay = iso => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
 const BYDAY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 // Lines longer than 75 bytes are folded, as the iCalendar format requires.
@@ -53,8 +53,9 @@ export default async (req) => {
       if ((v.end_time || '') <= (v.start_time || '')) endDate = addDay(v.start_date); // runs past midnight
       lines.push(`DTSTART;TZID=${tz}:${d8(v.start_date)}T${t6(v.start_time)}`, `DTEND;TZID=${tz}:${d8(endDate)}T${t6(v.end_time)}`);
     }
-    if (Array.isArray(v.repeat_days) && v.repeat_days.length) {
-      lines.push(`RRULE:FREQ=WEEKLY;BYDAY=${v.repeat_days.map(d => BYDAY[d]).join(',')}${v.repeat_until ? `;UNTIL=${v.all_day ? d8(v.repeat_until) : d8(addDay(v.repeat_until)) + 'T115959Z'}` : ''}`);
+    const days = Array.isArray(v.repeat_days) ? v.repeat_days.filter(d => BYDAY[d]) : [];
+    if (days.length) {
+      lines.push(`RRULE:FREQ=WEEKLY;BYDAY=${days.map(d => BYDAY[d]).join(',')}${v.repeat_until ? `;UNTIL=${v.all_day ? d8(v.repeat_until) : d8(addDay(v.repeat_until)) + 'T115959Z'}` : ''}`);
       for (const sk of v.skip_dates || []) lines.push(v.all_day ? `EXDATE;VALUE=DATE:${d8(sk)}` : `EXDATE;TZID=${tz}:${d8(sk)}T${t6(v.start_time)}`);
     }
     lines.push('TRANSP:OPAQUE', 'END:VEVENT');

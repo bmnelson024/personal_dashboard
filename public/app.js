@@ -318,20 +318,22 @@ const REPEATS = { daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', m
 function nextDue(t) {
   const base = t.due ? fromKey(t.due) : todayD();
   const addMonths = n => { const d = new Date(base.getFullYear(), base.getMonth() + n, 1), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(base.getDate(), last)); return d; };
-  const d = { daily: addDays(base, 1), weekly: addDays(base, 7), biweekly: addDays(base, 14), monthly: addMonths(1), quarterly: addMonths(3), yearly: addMonths(12) }[t.repeat];
-  return d ? keyOf(d) : null;
+  const step = n => ({ daily: addDays(base, n), weekly: addDays(base, 7 * n), biweekly: addDays(base, 14 * n), monthly: addMonths(n), quarterly: addMonths(3 * n), yearly: addMonths(12 * n) }[t.repeat]);
+  if (!step(1)) return null;
+  // finished late? skip ahead to the first date that isn't already past
+  let n = 1; while (keyOf(step(n)) < todayK() && n < 1000) n++;
+  return keyOf(step(n));
 }
 function toggle(id) {
   const t = S.tasks.find(x => x.id === id); if (!t) return;
   const was = t.done;
-  patchTask(id, { done: !was, doneAt: !was ? Date.now() : null });
-  if (was) return;
+  if (was) { patchTask(id, { done: false, doneAt: null }); return; }
   if (t.repeat && REPEATS[t.repeat]) {
     // the finished one stays in Completed and loses its repeat; the next one carries it forward
-    patchTask(id, { repeat: '' });
+    patchTask(id, { done: true, doneAt: Date.now(), repeat: '' });
     const nx = addTask({ title: t.title, area: t.area, pri: t.pri, notes: t.notes, due: nextDue(t), repeat: t.repeat });
     toast(`Done. Next one is due ${fromKey(nx.due).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`, () => { delTasks([nx.id]); patchTask(id, { done: false, doneAt: null, repeat: t.repeat }); });
-  } else toast('Marked done.', () => patchTask(id, { done: false, doneAt: null }));
+  } else { patchTask(id, { done: true, doneAt: Date.now() }); toast('Marked done.', () => patchTask(id, { done: false, doneAt: null })); }
 }
 function clearDone(list) {
   const copies = list.map(t => ({ ...t }));
@@ -637,7 +639,8 @@ $('ftForm').addEventListener('submit', async e => {
   }
   const zone = new Intl.DateTimeFormat('en-US', { timeZoneName: 'long' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || 'my time';
   ftText = lines.length ? `Here are some times that work for me (${zone.replace(/ Standard| Daylight/, '')}):\n${lines.join('\n')}` : '';
-  $('ftOut').innerHTML = days.length ? days.join('') : '<p class="none">No open slots that long in that range. Try a shorter length, a later end time, or a different week.</p>';
+  const anyDay = (() => { for (let d = new Date(a); d < b; d = addDays(d, 1)) if (CV.weekends || (d.getDay() !== 0 && d.getDay() !== 6)) return true; return false; })();
+  $('ftOut').innerHTML = days.length ? days.join('') : `<p class="none">${anyDay ? 'No open slots that long in that range. Try a shorter length, a later end time, or a different week.' : 'There are no workdays left this week. Choose Next week.'}</p>`;
   $('ftCopy').hidden = !lines.length;
 });
 $('ftCopy').addEventListener('click', async () => {
