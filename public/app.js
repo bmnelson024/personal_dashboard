@@ -379,11 +379,11 @@ function bindRows(container, arr, rerender) {
 }
 
 /* ---------- calendar view ---------- */
-// Day and week grids show 6 am to 10 pm. Hour height stretches so the whole range fits the window.
-const GRID_START = 6, GRID_END = 22, GRID_HOURS = GRID_END - GRID_START;
+// Day and week grids show 6 am to 8 pm. Hour height stretches so the whole range fits the window.
+const GRID_START = 6, GRID_END = 20, GRID_HOURS = GRID_END - GRID_START;
 let HH = 48;
 let gridTop = 330; // measured distance from the top of the page to the grid, updated after each render
-const fitHourHeight = () => { HH = Math.floor(Math.min(72, Math.max(innerWidth < 700 ? 34 : 24, (innerHeight - gridTop - 32) / GRID_HOURS))); };
+const fitHourHeight = () => { HH = Math.floor(Math.min(72, Math.max(innerWidth < 700 ? 40 : 32, (innerHeight - gridTop - 32) / GRID_HOURS))); };
 const CV = { view: innerWidth < 700 ? 'day' : 'week', date: todayD(), weekends: cache.get('weekends') === true, hidden: new Set(cache.get('hiddenCals') || []), store: {}, list: [], loading: false };
 function cvRange() {
   const d = CV.date;
@@ -444,7 +444,8 @@ function renderTimeGrid(days) {
     const a = d.getTime(), b = addDays(d, 1).getTime();
     const ws = new Date(d.getFullYear(), d.getMonth(), d.getDate(), GRID_START).getTime(), we = new Date(d.getFullYear(), d.getMonth(), d.getDate(), GRID_END).getTime();
     // events before 6 am or after 10 pm are pinned to the top or bottom edge instead of disappearing
-    const items = layoutDay(evs.filter(e => !dayLevel(e) && e.s < b && e.e > a).map(e => { const st = Math.min(Math.max(e.s, ws), we - 20 * 60000); return { ...e, s: st, e: Math.min(Math.max(e.e, st + 20 * 60000), we), orig: e }; }));
+    const minMs = 22 / HH * 36e5; // shortest block we draw, in time
+    const items = layoutDay(evs.filter(e => !dayLevel(e) && e.s < b && e.e > a).map(e => { const st = Math.min(Math.max(e.s, ws), we - minMs); return { ...e, s: st, e: Math.min(Math.max(e.e, st + minMs), we), orig: e }; }));
     const blocks = items.map(x => {
       const top = (x.s - ws) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
       const w = 100 / x._n, l = x._col * w;
@@ -454,7 +455,7 @@ function renderTimeGrid(days) {
     const nowl = keyOf(d) === tk && now >= ws && now <= we ? `<div class="nowl" style="top:${(now - ws) / 36e5 * HH}px"></div>` : '';
     return `<div class="dcol${keyOf(d) === tk ? ' td' : ''}" data-date="${keyOf(d)}" title="Click to add an event">${blocks}${nowl}</div>`;
   }).join('');
-  return `<div class="tg" style="--days:${days.length};--hh:${HH}px"><div class="tg-head"><div></div>${head}</div><div class="tg-all"><div class="lab">All day</div>${all}</div><div class="tg-scroll" id="tgScroll"><div class="tg-grid"><div class="hours">${hours}</div>${cols}</div></div></div>`;
+  return `<div class="tg" style="--days:${days.length};--hh:${HH}px;--hrs:${GRID_HOURS}"><div class="tg-head"><div></div>${head}</div><div class="tg-all"><div class="lab">All day</div>${all}</div><div class="tg-scroll" id="tgScroll"><div class="tg-grid"><div class="hours">${hours}</div>${cols}</div></div></div>`;
 }
 function renderMonth() {
   const [a] = cvRange(), evs = cvEvents(), tk = todayK(), m = CV.date.getMonth();
