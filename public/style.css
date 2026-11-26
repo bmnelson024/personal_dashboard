@@ -180,9 +180,9 @@ input[type=time]{font-size:16px;min-height:44px;padding:8px 10px;border:1px soli
 /* wide screens: use the space */
 @media(min-width:1400px){
 .wrap{max-width:1900px;padding:0 32px}
-main{grid-template-columns:minmax(0,4fr) minmax(0,5fr) minmax(0,3fr);gap:0 36px}
+main{grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,5fr);gap:0 36px}
 .colL{display:contents}
 #agSec{grid-column:1;grid-row:1}
-.colR{grid-column:2;grid-row:1}
-#wkSec{grid-column:3;grid-row:1;border-top:0;padding-top:0}
+#wkSec{grid-column:2;grid-row:1;border-top:0;padding-top:0}
+.colR{grid-column:3;grid-row:1}
 }
