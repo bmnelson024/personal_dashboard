@@ -95,9 +95,12 @@
       <label class="fld">Business<select id="edArea"></select></label>
       <label class="fld">Due<input type="date" id="edDue"></label>
     </div>
-    <label class="chkl"><input type="checkbox" id="edPri"> High priority</label>
+    <div class="row2">
+      <label class="fld">Repeat<select id="edRepeat"><option value="">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></label>
+      <label class="chkl"><input type="checkbox" id="edPri"> High priority</label>
+    </div>
     <label class="fld">Notes<textarea id="edNotes"></textarea></label>
-    <div class="acts"><button class="btn warn" type="button" id="edDel">Delete</button><span class="sp"></span><button class="btn" type="button" id="edCancel">Cancel</button><button class="btn pri" type="submit">Save</button></div>
+    <div class="acts"><button class="btn warn" type="button" id="edDel">Delete</button><button class="btn" type="button" id="edBlock">Block time</button><span class="sp"></span><button class="btn" type="button" id="edCancel">Cancel</button><button class="btn pri" type="submit">Save</button></div>
   </form>
 </div>
 

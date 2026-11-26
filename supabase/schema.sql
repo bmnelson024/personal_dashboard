@@ -79,3 +79,6 @@ exception when duplicate_object then null; end $$;
 
 -- Per-calendar switch for the missing-Unavailable check (added Nov 2026).
 alter table public.calendars add column if not exists needs_blocks boolean not null default true;
+
+-- Repeating to-dos (added Nov 2026).
+alter table public.tasks add column if not exists repeat text;

@@ -208,3 +208,5 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .ftout ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
 .ftout li{padding:6px 10px;border-radius:6px;background:var(--panel);font-size:14px;white-space:nowrap}
 .ftout .none{color:var(--mute);font-size:14px}
+.meta .rep{white-space:nowrap}
+.row2 .chkl{align-self:end;margin-bottom:12px}

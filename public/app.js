@@ -252,7 +252,7 @@ function renderChips() {
 }
 function taskRow(t) {
   const a = areaById(t.area), late = !t.done && t.due && t.due < todayK();
-  return `<li class="task${t.pri ? ' hi' : ''}${t.done ? ' done' : ''}" data-id="${esc(t.id)}"><button class="chk" type="button" data-act="toggle" aria-label="${t.done ? 'Mark not done' : 'Mark done'}: ${esc(t.title)}"></button><div class="tb"><div class="tt">${esc(t.title)}</div><div class="meta"><span class="tag"><span class="dot" style="--c:${esc(a.color)}"></span>${esc(a.name)}</span>${t.due ? `<span class="dd${late ? ' late' : ''}">${esc(dueLabel(t.due))}</span>` : ''}${t.pri && !t.done ? '<span class="flag">High</span>' : ''}${t.notes ? `<span>${esc(t.notes.split('\n')[0].slice(0, 60))}</span>` : ''}</div></div></li>`;
+  return `<li class="task${t.pri ? ' hi' : ''}${t.done ? ' done' : ''}" data-id="${esc(t.id)}"><button class="chk" type="button" data-act="toggle" aria-label="${t.done ? 'Mark not done' : 'Mark done'}: ${esc(t.title)}"></button><div class="tb"><div class="tt">${esc(t.title)}</div><div class="meta"><span class="tag"><span class="dot" style="--c:${esc(a.color)}"></span>${esc(a.name)}</span>${t.due ? `<span class="dd${late ? ' late' : ''}">${esc(dueLabel(t.due))}</span>` : ''}${t.pri && !t.done ? '<span class="flag">High</span>' : ''}${t.repeat && REPEATS[t.repeat] && !t.done ? `<span class="rep">&#8635; ${REPEATS[t.repeat]}</span>` : ''}${t.notes ? `<span>${esc(t.notes.split('\n')[0].slice(0, 60))}</span>` : ''}</div></div></li>`;
 }
 function renderTodos() {
   const el = $('todos');
@@ -281,8 +281,11 @@ function renderTodos() {
 function renderAll() { renderHeader(); renderAgenda(); renderWeek(); renderChips(); renderTodos(); }
 
 /* ---------- data: tasks ---------- */
-const fromRow = r => ({ id: r.id, title: r.title, area: r.area ?? '', due: r.due, pri: !!r.pri, notes: r.notes || '', done: !!r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, created: r.created_at ? Date.parse(r.created_at) : Date.now() });
-const toRow = t => ({ id: t.id, title: t.title, area: t.area || null, due: t.due || null, pri: !!t.pri, notes: t.notes || '', done: !!t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null });
+const fromRow = r => ({ id: r.id, title: r.title, area: r.area ?? '', due: r.due, pri: !!r.pri, notes: r.notes || '', repeat: r.repeat || '', done: !!r.done, doneAt: r.done_at ? Date.parse(r.done_at) : null, created: r.created_at ? Date.parse(r.created_at) : Date.now() });
+const toRow = t => ({ id: t.id, title: t.title, area: t.area || null, due: t.due || null, pri: !!t.pri, notes: t.notes || '', done: !!t.done, done_at: t.doneAt ? new Date(t.doneAt).toISOString() : null, ...(S.repeatCol === false ? {} : { repeat: t.repeat || null }) });
+// Until the 'repeat' column exists in Supabase, retry once without it.
+const missingRepeat = err => err && /repeat/i.test(err.message || '') && /column|schema/i.test(err.message || '');
+function save(q, retry) { q().then(({ error }) => { if (missingRepeat(error) && S.repeatCol !== false) { S.repeatCol = false; banner('Repeating to-dos need a one-time Supabase update (see setup notes). Saved without repeating.'); retry(); } else if (error) fail(error); }); }
 function upsertLocal(t) { const i = S.tasks.findIndex(x => x.id === t.id); if (i >= 0) S.tasks[i] = t; else S.tasks.push(t); }
 function changed() { cache.set('tasks', S.tasks); renderHeader(); renderWeek(); renderChips(); renderTodos(); if (CV.view === 'month') renderCal(); }
 function fail(e) { console.error(e); banner('A change could not be saved. Check your connection and try again.'); loadTasks(); }
@@ -294,14 +297,15 @@ async function loadTasks() {
 function addTask(t) {
   const task = { ...t, id: crypto.randomUUID(), done: false, doneAt: null, created: Date.now() };
   upsertLocal(task); changed();
-  sb.from('tasks').insert(toRow(task)).then(({ error }) => error && fail(error));
+  const go = () => save(() => sb.from('tasks').insert(toRow(task)), go); go();
+  return task;
 }
 function patchTask(id, patch) {
   const t = S.tasks.find(x => x.id === id); if (!t) return;
   const next = { ...t, ...patch }; upsertLocal(next); changed();
-  sb.from('tasks').update(toRow(next)).eq('id', id).then(({ error }) => error && fail(error));
+  const go = () => save(() => sb.from('tasks').update(toRow(next)).eq('id', id), go); go();
 }
-function restoreTask(t) { upsertLocal(t); changed(); sb.from('tasks').upsert(toRow(t)).then(({ error }) => error && fail(error)); }
+function restoreTask(t) { upsertLocal(t); changed(); const go = () => save(() => sb.from('tasks').upsert(toRow(t)), go); go(); }
 function delTasks(ids) {
   S.tasks = S.tasks.filter(t => !ids.includes(t.id)); changed();
   sb.from('tasks').delete().in('id', ids).then(({ error }) => error && fail(error));
@@ -309,11 +313,25 @@ function delTasks(ids) {
 let toastT = null, undoFn = null;
 function toast(msg, undo) { $('toastMsg').textContent = msg; undoFn = undo; $('toastUndo').hidden = !undo; $('toast').classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => $('toast').classList.remove('on'), 6000); }
 function banner(msg) { const b = $('banner'); b.textContent = msg; b.hidden = !msg; clearTimeout(banner.t); if (msg) banner.t = setTimeout(() => { b.hidden = true; }, 8000); }
+const REPEATS = { daily: 'Daily', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', quarterly: 'Quarterly', yearly: 'Yearly' };
+// Next due date for a repeating to-do, counted from its due date (or today if it had none).
+function nextDue(t) {
+  const base = t.due ? fromKey(t.due) : todayD();
+  const addMonths = n => { const d = new Date(base.getFullYear(), base.getMonth() + n, 1), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(base.getDate(), last)); return d; };
+  const d = { daily: addDays(base, 1), weekly: addDays(base, 7), biweekly: addDays(base, 14), monthly: addMonths(1), quarterly: addMonths(3), yearly: addMonths(12) }[t.repeat];
+  return d ? keyOf(d) : null;
+}
 function toggle(id) {
   const t = S.tasks.find(x => x.id === id); if (!t) return;
   const was = t.done;
   patchTask(id, { done: !was, doneAt: !was ? Date.now() : null });
-  if (!was) toast('Marked done.', () => patchTask(id, { done: false, doneAt: null }));
+  if (was) return;
+  if (t.repeat && REPEATS[t.repeat]) {
+    // the finished one stays in Completed and loses its repeat; the next one carries it forward
+    patchTask(id, { repeat: '' });
+    const nx = addTask({ title: t.title, area: t.area, pri: t.pri, notes: t.notes, due: nextDue(t), repeat: t.repeat });
+    toast(`Done. Next one is due ${fromKey(nx.due).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}.`, () => { delTasks([nx.id]); patchTask(id, { done: false, doneAt: null, repeat: t.repeat }); });
+  } else toast('Marked done.', () => patchTask(id, { done: false, doneAt: null }));
 }
 function clearDone(list) {
   const copies = list.map(t => ({ ...t }));
@@ -359,7 +377,7 @@ function parseQuick(raw) {
 let editing = null;
 function openEditor(id) {
   const t = S.tasks.find(x => x.id === id); if (!t) return; editing = id;
-  $('edTitle').value = t.title; $('edArea').innerHTML = areaOptions(t.area || ''); $('edDue').value = t.due || ''; $('edPri').checked = !!t.pri; $('edNotes').value = t.notes || '';
+  $('edTitle').value = t.title; $('edArea').innerHTML = areaOptions(t.area || ''); $('edDue').value = t.due || ''; $('edPri').checked = !!t.pri; $('edNotes').value = t.notes || ''; $('edRepeat').value = t.repeat || '';
   $('edOv').classList.add('open'); setTimeout(() => $('edTitle').focus(), 0);
 }
 const closeEditor = () => { $('edOv').classList.remove('open'); editing = null; };
@@ -733,10 +751,19 @@ $('todos').addEventListener('click', e => {
 });
 $('edForm').addEventListener('submit', e => {
   e.preventDefault(); if (!editing) return;
-  patchTask(editing, { title: $('edTitle').value.trim() || 'Untitled', area: $('edArea').value, due: $('edDue').value || null, pri: $('edPri').checked, notes: $('edNotes').value });
+  const rp = $('edRepeat').value; let due = $('edDue').value || null; if (rp && !due) due = todayK(); // a repeating to-do needs a due date to count from
+  patchTask(editing, { title: $('edTitle').value.trim() || 'Untitled', area: $('edArea').value, due, pri: $('edPri').checked, notes: $('edNotes').value, repeat: rp });
   closeEditor();
 });
 $('edCancel').addEventListener('click', closeEditor);
+$('edBlock').addEventListener('click', () => {
+  const t = S.tasks.find(x => x.id === editing); if (!t) return;
+  closeEditor();
+  const now = new Date(), day = t.due && t.due > todayK() ? fromKey(t.due) : todayD();
+  const start = keyOf(day) === todayK() ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes() < 30 ? 30 : 60) : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9);
+  openNewEvent(start);
+  $('neCal').value = 'personal'; $('neTitle').value = t.title; $('neNotes').value = 'To-do: ' + t.title; neHelp();
+});
 $('navDash').addEventListener('click', () => { if (location.hash) history.pushState(null, '', location.pathname); route(); });
 $('navCal').addEventListener('click', () => { location.hash = 'calendar'; });
 $('sum').addEventListener('click', e => { if (e.target.id === 'gapLink') { CV.view = innerWidth < 700 ? 'day' : 'week'; CV.date = todayD(); location.hash = 'calendar'; route(); } });
