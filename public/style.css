@@ -170,3 +170,9 @@ details.done summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--m
 @media(max-width:600px){.row3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.row3 .fld:first-child{grid-column:1/-1}}
 input[type=time]{font-size:16px;min-height:44px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--field);width:100%}
 .dcol{cursor:copy}
+.gapw{font-size:13px;color:var(--red);font-weight:600;margin-top:2px}
+.eb.gap,.me.gap,.ab.gap{outline:2px dashed var(--red);outline-offset:-2px}
+.gi{display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:var(--red);color:#fff;font:700 11px/1 Inter,sans-serif;font-style:normal;margin-right:4px;vertical-align:1px;flex:none}
+.eb .gi{float:left;margin-top:1px}
+.note.warnt{color:var(--red);font-weight:600}
+.sum .lnk{font-size:inherit;min-height:0;padding:0}

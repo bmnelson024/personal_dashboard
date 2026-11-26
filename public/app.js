@@ -42,6 +42,29 @@ function timeParts(ms) {
 const timeStr = ms => timeParts(ms).join(' ');
 // Hold blocks Brian adds so one company can't book over another's meeting. Hidden from the dashboard's upcoming list only.
 const isBlocker = e => /^\s*unavailable\b/i.test(e.title || '');
+// Calendars Brian uses Unavailable blocks on. Remembered across loads so a quiet week doesn't drop one.
+const blockCals = new Set(JSON.parse(localStorage.getItem('db:blockCals') || '[]'));
+/* Returns Map(event -> [calendar ids missing an Unavailable]) for bookings that still need one. */
+function findGaps(events) {
+  let grew = false;
+  for (const e of events) if (isBlocker(e)) for (const c of e.cals) if (!blockCals.has(c)) { blockCals.add(c); grew = true; }
+  if (grew) { try { localStorage.setItem('db:blockCals', JSON.stringify([...blockCals])); } catch {} }
+  const cover = {};
+  for (const e of events) if (isBlocker(e) && !e.allDay) for (const c of e.cals) (cover[c] = cover[c] || []).push([e.s, e.e]);
+  for (const c in cover) { // merge back-to-back blocks so two half-hour holds cover an hour meeting
+    const l = cover[c].sort((x, y) => x[0] - y[0]), m = [];
+    for (const r of l) { const t = m[m.length - 1]; if (t && r[0] <= t[1] + 60000) t[1] = Math.max(t[1], r[1]); else m.push([...r]); }
+    cover[c] = m;
+  }
+  const covered = (c, s, e) => (cover[c] || []).some(([a, b]) => a <= s + 60000 && b >= e - 60000);
+  const gaps = new Map(), now = Date.now();
+  for (const e of events) {
+    if (isBlocker(e) || e.allDay || e.free || e.e <= now) continue;
+    const miss = [...blockCals].filter(c => !e.cals.includes(c) && S.cals.some(x => x.id === c && x.on !== false) && !covered(c, e.s, e.e));
+    if (miss.length) gaps.set(e, miss);
+  }
+  return gaps;
+}
 
 /* ---------- calendars ---------- */
 function dedupe(list) {
@@ -88,24 +111,27 @@ const openTasks = () => S.tasks.filter(t => !t.done);
 function renderHeader() {
   $('today').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const tk = todayK(), t1 = addDays(todayD(), 1).getTime();
-  const left = S.events.filter(e => !e.allDay && e.e > Date.now() && e.s < t1).length;
+  const left = S.events.filter(e => !e.allDay && !isBlocker(e) && e.e > Date.now() && e.s < t1).length;
+  const gapN = S.cals.length ? findGaps(S.events).size : 0;
   const ot = openTasks(), due = ot.filter(t => t.due === tk).length, late = ot.filter(t => t.due && t.due < tk).length;
   const bits = [];
   if (S.cals.length) bits.push(`<b>${left}</b> ${left === 1 ? 'meeting' : 'meetings'} left today`);
   bits.push(`<b>${due}</b> ${due === 1 ? 'to-do' : 'to-dos'} due today`);
   if (late) bits.push(`<b class="late">${late} overdue</b>`);
+  if (gapN) bits.push(`<button type="button" class="lnk late" id="gapLink">${gapN} ${gapN === 1 ? 'booking needs' : 'bookings need'} an Unavailable</button>`);
   bits.push(`${ot.length} open in all`);
   $('sum').innerHTML = bits.join(', ');
   document.title = due + late ? `(${due + late}) Day Book` : 'Day Book';
   if ('setAppBadge' in navigator) { (due + late ? navigator.setAppBadge(due + late) : navigator.clearAppBadge()).catch(() => {}); }
 }
-function evRow(ev, now) {
+const calNames = ids => ids.map(c => calById(c).name).join(', ');
+function evRow(ev, now, miss) {
   const [t, ap] = ev.allDay ? ['All', 'day'] : timeParts(ev.s);
   const cls = ev.e <= now ? 'past' : (ev.s <= now ? 'live' : '');
   const dots = ev.cals.map(id => `<span class="dot" style="--c:${esc(calById(id).color)}"></span>`).join('');
   const names = ev.cals.map(id => esc(calById(id).name)).join(' + ');
   const sub = [ev.allDay ? '' : `until ${esc(timeStr(ev.e))}`, ev.loc ? esc(ev.loc) : '', ev.free ? 'free' : ''].filter(Boolean).join(' · ');
-  return `<div class="ev ${cls}"><div class="t">${esc(t)}<small>${esc(ap)}</small></div><div><div class="ttl">${esc(ev.title)}</div><div class="sub"><span class="cals">${dots}</span>${names}${sub ? ' · ' + sub : ''}</div></div></div>`;
+  return `<div class="ev ${cls}"><div class="t">${esc(t)}<small>${esc(ap)}</small></div><div><div class="ttl">${esc(ev.title)}</div><div class="sub"><span class="cals">${dots}</span>${names}${sub ? ' · ' + sub : ''}</div>${miss ? `<div class="gapw">No Unavailable on ${esc(calNames(miss))}</div>` : ''}</div></div>`;
 }
 function renderAgenda() {
   const el = $('agenda');
@@ -119,7 +145,8 @@ function renderAgenda() {
   if (S.calState === 'error') { el.innerHTML = `<div class="empty"><p>Calendars couldn't load: ${esc(S.calFail)}</p></div>`; return; }
   const errs = Object.keys(S.calErr).length;
   const t0 = todayD().getTime(), t1 = addDays(todayD(), 1).getTime(), now = Date.now();
-  const day = S.events.filter(e => e.s < t1 && e.e > t0);
+  const day = S.events.filter(e => e.s < t1 && e.e > t0 && !isBlocker(e));
+  const gaps = findGaps(S.events);
   const ad = day.filter(e => e.allDay), tm = day.filter(e => !e.allDay);
   let html = errs ? `<p class="banner">${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh. Check Settings.</p>` : '';
   if (ad.length) html += `<div class="allday">${ad.map(e => `<span class="ad"><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span>${esc(e.title)}</span>`).join('')}</div>`;
@@ -127,7 +154,7 @@ function renderAgenda() {
   let placed = false;
   for (const ev of tm) {
     if (!placed && ev.s > now) { html += `<div class="now">Now ${esc(timeStr(now))}</div>`; placed = true; }
-    html += evRow(ev, now);
+    html += evRow(ev, now, gaps.get(ev));
   }
   if (!placed && tm.length) html += `<div class="now">Now ${esc(timeStr(now))}</div>`;
   el.innerHTML = html;
@@ -325,6 +352,7 @@ function cvEvents() {
 const evColor = e => calById(e.cals.find(c => !CV.hidden.has(c)) || e.cal).color;
 function evBtn(cls, e, inner, style) {
   CV.list.push(e);
+  if (CV.gaps && CV.gaps.has(e)) { cls += ' gap'; inner = '<i class="gi" aria-label="Needs an Unavailable">!</i>' + inner; }
   return `<button type="button" class="${cls}" data-k="${CV.list.length - 1}" style="--c:${esc(evColor(e))};${style || ''}">${inner}</button>`;
 }
 function layoutDay(evs) {
@@ -350,7 +378,7 @@ function renderTimeGrid(days) {
   const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HH}px">${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}</span>`).join('');
   const cols = days.map(d => {
     const a = d.getTime(), b = addDays(d, 1).getTime();
-    const items = layoutDay(evs.filter(e => !e.allDay && e.s < b && e.e > a).map(e => ({ ...e, _s: Math.max(e.s, a), _e: Math.min(Math.max(e.e, e.s + 15 * 60000), b) })).map(e => ({ ...e, s: e._s, e: e._e, orig: e })));
+    const items = layoutDay(evs.filter(e => !e.allDay && e.s < b && e.e > a).map(e => ({ ...e, s: Math.max(e.s, a), e: Math.min(Math.max(e.e, e.s + 15 * 60000), b), orig: e })));
     const blocks = items.map(x => {
       const top = (x.s - a) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
       const w = 100 / x._n, l = x._col * w;
@@ -381,13 +409,16 @@ function renderMonth() {
 function renderCal() {
   if ($('calView').hidden) return;
   CV.list = [];
+  { const [ga, gb] = cvRange(), gh = CV.store[ga.getTime() + '-' + gb.getTime()]; CV.gaps = gh && S.cals.length ? findGaps(gh.events) : new Map(); }
   $('cTitle').textContent = cvTitle();
   for (const b of $('cViews').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === CV.view);
   $('cWeekends').setAttribute('aria-pressed', CV.weekends);
   $('cLegend').innerHTML = S.cals.map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
   const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
   const errs = hit ? Object.keys(hit.errors || {}).length : 0;
-  $('cStatus').textContent = !S.cals.length ? 'No calendars yet. Add them in Settings.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : '';
+  const gn = CV.gaps.size;
+  $('cStatus').textContent = !S.cals.length ? 'No calendars yet. Add them in Settings.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : gn ? `${gn} ${gn === 1 ? 'booking is' : 'bookings are'} missing an Unavailable block (marked with !).` : '';
+  $('cStatus').classList.toggle('warnt', !!gn && !CV.loading && !CV.err && !errs);
   const prevScroll = $('tgScroll')?.scrollTop;
   if (CV.view === 'month') $('cBody').innerHTML = renderMonth();
   else {
@@ -411,6 +442,8 @@ function showEvent(e) {
   const dstr = ms => new Date(ms).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   $('evWhen').textContent = e.allDay ? (sameDay ? dstr(e.s) + ', all day' : `${dstr(e.s)} to ${dstr(e.e - 1)}, all day`) : sameDay ? `${dstr(e.s)}, ${timeStr(e.s)} to ${timeStr(e.e)}` : `${dstr(e.s)} ${timeStr(e.s)} to ${dstr(e.e)} ${timeStr(e.e)}`;
   $('evLoc').textContent = e.loc || ''; $('evLoc').hidden = !e.loc;
+  const miss = CV.gaps && CV.gaps.get(e);
+  $('evWarn').textContent = miss ? `No Unavailable block on ${calNames(miss)} for this time.` : ''; $('evWarn').hidden = !miss;
   $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.free ? ' · shown as free' : '');
   $('evOv').classList.add('open');
 }
@@ -498,6 +531,7 @@ $('edForm').addEventListener('submit', e => {
 $('edCancel').addEventListener('click', closeEditor);
 $('navDash').addEventListener('click', () => { if (location.hash) history.pushState(null, '', location.pathname); route(); });
 $('navCal').addEventListener('click', () => { location.hash = 'calendar'; });
+$('sum').addEventListener('click', e => { if (e.target.id === 'gapLink') { CV.view = innerWidth < 700 ? 'day' : 'week'; CV.date = todayD(); location.hash = 'calendar'; route(); } });
 $('expandCal').addEventListener('click', () => { location.hash = 'calendar'; });
 window.addEventListener('hashchange', route);
 $('cPrev').addEventListener('click', () => cvStep(-1));
