@@ -379,7 +379,11 @@ function bindRows(container, arr, rerender) {
 }
 
 /* ---------- calendar view ---------- */
-const HH = 48;
+// Day and week grids show 6 am to 10 pm. Hour height stretches so the whole range fits the window.
+const GRID_START = 6, GRID_END = 22, GRID_HOURS = GRID_END - GRID_START;
+let HH = 48;
+let gridTop = 330; // measured distance from the top of the page to the grid, updated after each render
+const fitHourHeight = () => { HH = Math.floor(Math.min(72, Math.max(innerWidth < 700 ? 34 : 24, (innerHeight - gridTop - 32) / GRID_HOURS))); };
 const CV = { view: innerWidth < 700 ? 'day' : 'week', date: todayD(), weekends: cache.get('weekends') === true, hidden: new Set(cache.get('hiddenCals') || []), store: {}, list: [], loading: false };
 function cvRange() {
   const d = CV.date;
@@ -397,7 +401,7 @@ function cvTitle() {
 }
 async function cvLoad(force) {
   const [a, b] = cvRange(), key = a.getTime() + '-' + b.getTime(), hit = CV.store[key];
-  if (!S.cals.length) { CV.store[key] = { events: [], at: Date.now(), errors: {} }; renderCal(); return; }
+  if (!S.cals.length) { CV.store[key] = { events: [], at: 0, errors: {} }; renderCal(); return; } // at: 0 so it refetches once calendars load
   if (hit && !force && Date.now() - hit.at < 10 * 60000) { renderCal(); return; }
   CV.loading = true; renderCal();
   try { const res = await fetchEvents(a.getTime(), b.getTime()); CV.store[key] = { events: res.events, at: Date.now(), errors: res.errors }; CV.err = ''; }
@@ -434,17 +438,20 @@ function renderTimeGrid(days) {
     const a = d.getTime(), b = addDays(d, 1).getTime();
     return `<div>${evs.filter(e => dayLevel(e) && e.s < b && e.e > a).map(e => evBtn('ab', e, esc(e.title))).join('')}</div>`;
   }).join('');
-  const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HH}px">${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}</span>`).join('');
+  fitHourHeight();
+  const hours = Array.from({ length: GRID_HOURS + 1 }, (_, i) => { const h = GRID_START + i; return `<span style="top:${i * HH}px">${h % 12 || 12} ${h < 12 || h === 24 ? 'am' : 'pm'}</span>`; }).join('');
   const cols = days.map(d => {
     const a = d.getTime(), b = addDays(d, 1).getTime();
-    const items = layoutDay(evs.filter(e => !dayLevel(e) && e.s < b && e.e > a).map(e => ({ ...e, s: Math.max(e.s, a), e: Math.min(Math.max(e.e, e.s + 15 * 60000), b), orig: e })));
+    const ws = new Date(d.getFullYear(), d.getMonth(), d.getDate(), GRID_START).getTime(), we = new Date(d.getFullYear(), d.getMonth(), d.getDate(), GRID_END).getTime();
+    // events before 6 am or after 10 pm are pinned to the top or bottom edge instead of disappearing
+    const items = layoutDay(evs.filter(e => !dayLevel(e) && e.s < b && e.e > a).map(e => { const st = Math.min(Math.max(e.s, ws), we - 20 * 60000); return { ...e, s: st, e: Math.min(Math.max(e.e, st + 20 * 60000), we), orig: e }; }));
     const blocks = items.map(x => {
-      const top = (x.s - a) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
+      const top = (x.s - ws) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
       const w = 100 / x._n, l = x._col * w;
       const o = x.orig;
       return evBtn(`eb${h > 44 ? ' tall' : ''}${o.e <= now ? ' past' : ''}`, o, `<b>${esc(o.title)}</b>${h > 30 ? `${esc(timeStr(o.s))}${o.loc && h > 58 ? ' · ' + esc(o.loc) : ''}` : ''}`, `top:${top}px;height:${h}px;left:calc(${l}% + 2px);width:calc(${w}% - 4px)`);
     }).join('');
-    const nowl = keyOf(d) === tk ? `<div class="nowl" style="top:${(now - a) / 36e5 * HH}px"></div>` : '';
+    const nowl = keyOf(d) === tk && now >= ws && now <= we ? `<div class="nowl" style="top:${(now - ws) / 36e5 * HH}px"></div>` : '';
     return `<div class="dcol${keyOf(d) === tk ? ' td' : ''}" data-date="${keyOf(d)}" title="Click to add an event">${blocks}${nowl}</div>`;
   }).join('');
   return `<div class="tg" style="--days:${days.length};--hh:${HH}px"><div class="tg-head"><div></div>${head}</div><div class="tg-all"><div class="lab">All day</div>${all}</div><div class="tg-scroll" id="tgScroll"><div class="tg-grid"><div class="hours">${hours}</div>${cols}</div></div></div>`;
@@ -483,9 +490,11 @@ function renderCal() {
   else {
     const n = CV.view === 'day' ? 1 : CV.weekends ? 7 : 5;
     $('cBody').innerHTML = renderTimeGrid(Array.from({ length: n }, (_, i) => addDays(a, i)));
-    const sc = $('tgScroll');
+    let sc = $('tgScroll');
+    const top = Math.round(sc.getBoundingClientRect().top + scrollY);
+    if (Math.abs(top - gridTop) > 4) { gridTop = top; $('cBody').innerHTML = renderTimeGrid(Array.from({ length: n }, (_, i) => addDays(a, i))); sc = $('tgScroll'); }
     if (prevScroll != null && CV.keepScroll) sc.scrollTop = prevScroll;
-    else { const inRange = Date.now() >= a.getTime() && Date.now() < b.getTime(); const h = inRange ? new Date().getHours() - 1.5 : 7; sc.scrollTop = Math.max(0, h) * HH; }
+    else { const inRange = Date.now() >= a.getTime() && Date.now() < b.getTime(); const h = inRange ? new Date().getHours() - 1.5 - GRID_START : 1; sc.scrollTop = Math.max(0, h) * HH; }
     CV.keepScroll = true;
   }
 }
@@ -630,6 +639,7 @@ $('navCal').addEventListener('click', () => { location.hash = 'calendar'; });
 $('sum').addEventListener('click', e => { if (e.target.id === 'gapLink') { CV.view = innerWidth < 700 ? 'day' : 'week'; CV.date = todayD(); location.hash = 'calendar'; route(); } });
 $('expandCal').addEventListener('click', () => { location.hash = 'calendar'; });
 window.addEventListener('hashchange', route);
+let rsT; window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => { if (!$('calView').hidden && CV.view !== 'month') { CV.keepScroll = true; renderCal(); } }, 150); });
 $('cPrev').addEventListener('click', () => cvStep(-1));
 $('cNext').addEventListener('click', () => cvStep(1));
 $('cToday').addEventListener('click', () => cvGo(null, todayD()));
@@ -643,7 +653,7 @@ $('cLegend').addEventListener('click', e => {
 $('cBody').addEventListener('click', e => {
   const ev = e.target.closest('[data-k]'); if (ev) { showEvent(CV.list[+ev.dataset.k]); return; }
   const d = e.target.closest('[data-day]'); if (d) { cvGo('day', fromKey(d.dataset.day)); return; }
-  if (e.target.classList.contains('dcol')) { const r = e.target.getBoundingClientRect(); const mins = Math.max(0, Math.min(1410, Math.floor((e.clientY - r.top) / HH * 2) * 30)); const day = fromKey(e.target.dataset.date); openNewEvent(new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(mins / 60), mins % 60)); }
+  if (e.target.classList.contains('dcol')) { const r = e.target.getBoundingClientRect(); const mins = GRID_START * 60 + Math.max(0, Math.min(GRID_HOURS * 60 - 30, Math.floor((e.clientY - r.top) / HH * 2) * 30)); const day = fromKey(e.target.dataset.date); openNewEvent(new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(mins / 60), mins % 60)); }
 });
 $('evClose').addEventListener('click', () => $('evOv').classList.remove('open'));
 
