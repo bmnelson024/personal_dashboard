@@ -1,18 +1,33 @@
 # Day Book
 
-Brian's personal dashboard: to-dos for every business plus personal, and all of his Outlook calendars on one screen. It installs as an app on a computer or phone.
+Brian's personal dashboard: to-dos for every business plus personal, all of his Outlook calendars, and a built-in Personal calendar on one screen. It installs as an app on a computer or phone.
 
-- **Front end:** plain HTML, CSS and JavaScript in `public/`. There is no build step.
-- **Hosting:** Netlify. The `/api/calendars` function downloads the Outlook ICS feeds on the server, so the browser never runs into cross-site blocks.
-- **Data and sign-in:** Supabase. To-dos, calendar links and business settings are tables locked to your login by row level security. To-dos sync live between devices.
+## What it does
+- **Dashboard:** today's schedule, the next 5 workdays, and to-dos grouped by business (overdue, today, this week, later). Quick add understands `#n6`, `!` and trailing dates like `fri` or `12/3`.
+- **Calendar:** day, week and month views from 6 am to 8 pm, weekends optional, calendars you can show or hide, meeting hours per calendar, and Join buttons for Teams, Zoom, Meet and Webex links.
+- **Unavailable blocks:** "Unavailable" holds are hidden from the dashboard, and any booking missing a matching hold on the calendars you check is flagged with a red **!**. Out-of-office and whole-day holds don't count as meetings.
+- **Find open time:** free slots across all calendars for a chosen length and week, with a Copy for email button.
+- **Personal calendar:** stored in Day Book, with weekly repeats, skip one date, and a private subscribe link for your phone, Outlook, Google or the Skylight.
+- **To-dos:** repeating to-dos (daily to yearly), high priority, notes, undo, and Block time to put a to-do on the calendar.
+- **New events for Outlook calendars:** fill in the event in Day Book and it opens in the right Outlook account to save.
+- **Backup:** Settings > Download backup saves everything as a JSON file.
+
+## How it's built
+- **Front end:** plain HTML, CSS and JavaScript in `public/`. No build step. The Supabase library is a bundled copy in `public/vendor/` so the app doesn't depend on a public CDN and can open offline.
+- **Hosting:** Netlify. Server functions download the Outlook ICS feeds (so the browser never runs into cross-site blocks) and publish the Personal calendar feed.
+- **Data and sign-in:** Supabase. Every table is locked to your login by row level security. To-dos and personal events sync live between devices.
+- **Security headers:** a Content Security Policy in `netlify.toml` lets the page load code only from this site, Google Fonts and Supabase.
 
 ```
-public/                  the app (index.html, app.js, style.css, icons, service worker)
-netlify/functions/       config.mjs (hands the browser the public Supabase settings)
-                         calendars.mjs (fetches and expands your calendars)
-netlify/lib/ical.mjs     the Outlook calendar reader
-supabase/schema.sql      tables and security rules
-netlify.toml             Netlify settings
+public/                        the app (index.html, app.js, style.css, icons, service worker)
+public/vendor/                 bundled @supabase/supabase-js 2.45.4
+netlify/functions/config.mjs   hands the browser the public Supabase settings
+netlify/functions/calendars.mjs  fetches and expands your Outlook calendars (8 s per feed; Netlify stops functions at 10 s)
+netlify/functions/personal-ics.mjs  the Personal calendar subscribe feed at /cal/<token>.ics
+netlify/lib/ical.mjs           the Outlook calendar reader
+tests/ical.test.mjs            tests for the calendar reader (npm test)
+supabase/schema.sql            all tables, security rules and functions (safe to run again)
+netlify.toml                   Netlify settings and security headers
 ```
 
 ## Setup (about 15 minutes)
@@ -50,8 +65,14 @@ netlify.toml             Netlify settings
    - **iPhone:** in Safari, tap Share > Add to Home Screen.
    - **Android:** in Chrome, tap the menu > Install app.
 
+## Database updates
+`supabase/schema.sql` always holds the full, current setup and is safe to run again on an existing project: it only adds what's missing. After pulling a change that touches it, paste the whole file into the Supabase SQL Editor and run it.
+
 ## Making changes
-Edit the files, commit, and push. Netlify redeploys on its own. After changing anything in `public/`, raise `VERSION` in `public/sw.js` (for example `daybook-v2`) so installed copies pick up the update.
+Edit the files, commit, and push. Netlify redeploys on its own. After changing anything in `public/`, raise `VERSION` in `public/sw.js` so installed copies pick up the update.
+
+- **Run the tests:** `npm test` (needs Node 18 or newer).
+- **Update the bundled Supabase library:** in an empty folder run `npm i @supabase/supabase-js@<version> esbuild`, then `echo "export { createClient } from '@supabase/supabase-js';" > entry.js && npx esbuild entry.js --bundle --format=esm --minify --outfile=supabase-<version>.js`. Copy the file into `public/vendor/` and update the import at the top of `public/app.js` and the list in `public/sw.js`.
 
 ## Notes
 - Calendars refresh when the app opens, every 15 minutes, and when you click **Refresh calendars**. Outlook updates published feeds on its own schedule, often every 15 to 30 minutes, so a brand-new meeting can take a little while to appear.
