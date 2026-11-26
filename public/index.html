@@ -118,13 +118,26 @@
       <div id="calRows"></div>
       <div class="acts"><button class="btn" type="button" id="calAdd">Add calendar</button><span class="sp"></span><button class="btn pri" type="button" id="calSave">Save and refresh</button></div>
       <p class="note" id="calSetNote"></p>
+      <div class="feed">
+        <h3>See your Personal calendar elsewhere</h3>
+        <p class="note">A private link your phone, Outlook, Google Calendar or the Skylight can subscribe to. Anyone with the link can see your Personal events, so share it carefully.</p>
+        <input type="url" id="feedUrl" readonly aria-label="Subscribe link" hidden>
+        <div class="acts" style="justify-content:flex-start"><button class="btn" type="button" id="feedMake">Create link</button><button class="btn" type="button" id="feedCopy" hidden>Copy link</button><button class="btn warn" type="button" id="feedReset" hidden>Reset link</button></div>
+        <p class="note warnt" id="feedNote"></p>
+        <div class="help" id="feedHelp" hidden><b>Where to paste it.</b>
+          <ol><li><b>iPhone:</b> Settings, Calendar, Accounts, Add Account, Other, Add Subscribed Calendar.</li>
+          <li><b>Outlook on the web:</b> Calendar, Add calendar, Subscribe from web.</li>
+          <li><b>Google Calendar (computer):</b> Other calendars, the + button, From URL.</li>
+          <li><b>Skylight:</b> in the Skylight app, add a calendar by URL.</li></ol>
+          Those apps check for changes on their own schedule, usually within a few hours.</div>
+      </div>
     </div>
     <div id="paneArea" hidden>
       <p class="note">Each to-do belongs to one of these. Removing one moves its to-dos to Unfiled.</p>
       <div id="areaRows"></div>
       <div class="acts"><button class="btn" type="button" id="areaAdd">Add business</button><span class="sp"></span><button class="btn pri" type="button" id="areaSave">Save</button></div>
     </div>
-    <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
+    <div class="acts"><button class="btn" type="button" id="signOut">Sign out</button><button class="btn" type="button" id="backup">Download backup</button><span class="sp"></span><button class="btn" type="button" id="setClose">Close</button></div>
   </div>
 </div>
 

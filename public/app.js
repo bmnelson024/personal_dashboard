@@ -342,10 +342,11 @@ function clearDone(list) {
 /* ---------- data: settings and calendars ---------- */
 async function loadSettings() {
   const [{ data: st }, { data: cals, error }] = await Promise.all([
-    sb.from('settings').select('areas').maybeSingle(),
+    sb.from('settings').select('*').maybeSingle(),
     sb.from('calendars').select('*').order('sort')
   ]);
   S.areas = st && Array.isArray(st.areas) && st.areas.length ? st.areas : DEFAULT_AREAS;
+  S.feedToken = st ? st.feed_token || '' : ''; S.feedCol = !st || 'feed_token' in st;
   if (!error) { S.cals = cals.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled, needs: c.needs_blocks !== false })); S.needsCol = cals.length === 0 || 'needs_blocks' in cals[0]; }
   cache.set('areas', S.areas); cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
 }
@@ -383,6 +384,7 @@ function openEditor(id) {
 const closeEditor = () => { $('edOv').classList.remove('open'); editing = null; };
 let draftCals = [], draftAreas = [];
 async function openSettings(tab) {
+  renderFeed();
   draftCals = S.cals.map(c => ({ ...c })); draftAreas = S.areas.map(a => ({ ...a }));
   showTab(tab || 'cal'); renderCalRows(); renderAreaRows(); $('setOv').classList.add('open');
 }
@@ -734,6 +736,38 @@ $('neForm').addEventListener('submit', async e => {
 });
 $('cNew').addEventListener('click', () => openNewEvent(CV.view === 'day' && keyOf(CV.date) !== todayK() ? new Date(CV.date.getFullYear(), CV.date.getMonth(), CV.date.getDate(), 9) : null));
 $('addEvDash').addEventListener('click', () => openNewEvent());
+
+/* ---------- subscribe link and backup ---------- */
+const userTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
+const feedUrl = () => S.feedToken ? `${location.origin}/cal/${S.feedToken}.ics?tz=${encodeURIComponent(userTz())}` : '';
+function renderFeed() {
+  const u = feedUrl();
+  $('feedUrl').value = u; $('feedUrl').hidden = !u;
+  $('feedCopy').hidden = !u; $('feedReset').hidden = !u; $('feedMake').hidden = !!u;
+  $('feedHelp').hidden = !u;
+  $('feedNote').textContent = S.feedCol === false ? 'Run the one-time Supabase update from the setup notes to turn this on.' : '';
+}
+async function makeFeed() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  const { error } = await sb.from('settings').upsert({ user_id: S.session.user.id, feed_token: token, updated_at: new Date().toISOString() });
+  if (error) { S.feedCol = !/feed_token/i.test(error.message) ? S.feedCol : false; $('feedNote').textContent = /feed_token/i.test(error.message) ? 'Run the one-time Supabase update from the setup notes to turn this on.' : 'Could not create the link: ' + error.message; return; }
+  S.feedToken = token; renderFeed();
+}
+$('feedMake').addEventListener('click', makeFeed);
+$('feedReset').addEventListener('click', async () => {
+  if ($('feedReset').dataset.armed !== '1') { $('feedReset').dataset.armed = '1'; $('feedReset').textContent = 'Click again: the old link stops working'; return; }
+  $('feedReset').dataset.armed = ''; $('feedReset').textContent = 'Reset link'; await makeFeed(); toast('New link made. Update it anywhere you subscribed.');
+});
+$('feedCopy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(feedUrl()); toast('Link copied.'); } catch { $('feedUrl').select(); toast('Press Ctrl+C or Cmd+C to copy.'); } });
+$('backup').addEventListener('click', async () => {
+  const [t, p, c, st] = await Promise.all([sb.from('tasks').select('*'), sb.from('personal_events').select('*'), sb.from('calendars').select('*'), sb.from('settings').select('*').maybeSingle()]);
+  const data = { app: 'Day Book', exported: new Date().toISOString(), tasks: t.data || [], personal_events: p.data || [], calendars: c.data || [], settings: st.data || null };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `daybook-backup-${todayK()}.json`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`Backup downloaded: ${data.tasks.length} to-dos, ${data.personal_events.length} personal events. It includes your calendar links, so keep the file private.`);
+});
 
 /* ---------- events ---------- */
 $('addForm').addEventListener('submit', e => {

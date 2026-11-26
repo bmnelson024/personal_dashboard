@@ -210,3 +210,6 @@ a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .ftout .none{color:var(--mute);font-size:14px}
 .meta .rep{white-space:nowrap}
 .row2 .chkl{align-self:end;margin-bottom:12px}
+.feed{border-top:1px solid var(--rule);margin-top:16px;padding-top:12px}
+.feed h3{font-size:16px;margin:0 0 4px}
+#feedUrl{width:100%;font-size:14px;margin:6px 0}

@@ -82,3 +82,16 @@ alter table public.calendars add column if not exists needs_blocks boolean not n
 
 -- Repeating to-dos (added Nov 2026).
 alter table public.tasks add column if not exists repeat text;
+
+-- Subscribe link for the Personal calendar (added Nov 2026).
+alter table public.settings add column if not exists feed_token text unique;
+create or replace function public.personal_feed(token text)
+returns setof public.personal_events
+language sql stable security definer set search_path = public
+as $$
+  select p.* from public.personal_events p
+  join public.settings s on s.user_id = p.user_id
+  where length(token) >= 48 and s.feed_token = token;
+$$;
+revoke all on function public.personal_feed(text) from public;
+grant execute on function public.personal_feed(text) to anon, authenticated;
