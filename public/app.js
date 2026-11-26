@@ -1,4 +1,4 @@
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+import { createClient } from '/vendor/supabase-2.45.4.js'; // bundled copy of @supabase/supabase-js 2.45.4 (see README)
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -749,9 +749,16 @@ async function start(session) {
 
 (async () => {
   try {
-    const r = await fetch('/api/config');
-    const cfg = await r.json();
-    if (!r.ok) throw new Error(cfg.error || 'Config missing');
+    let cfg;
+    try {
+      const r = await fetch('/api/config');
+      cfg = await r.json();
+      if (!r.ok) throw new Error(cfg.error || 'Config missing');
+      cache.set('cfg', cfg);
+    } catch (e) {
+      cfg = cache.get('cfg'); // offline: reuse the last settings so cached to-dos and calendar still show
+      if (!cfg) throw e;
+    }
     sb = createClient(cfg.url, cfg.anonKey, { auth: { persistSession: true, autoRefreshToken: true } });
   } catch (e) {
     document.body.innerHTML = `<div class="login"><div><span class="tab">Day book</span><h1>Setup needed</h1><p>${esc(e.message)}</p></div></div>`;
