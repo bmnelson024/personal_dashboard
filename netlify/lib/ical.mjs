@@ -161,7 +161,7 @@ export function buildEvents(text, calId, fromMs, toMs, tz) {
   const emit = (e, w, durMs, durDays) => {
     const title = unesc(val(e, 'SUMMARY')) || '(No title)';
     if (/^(canceled|cancelled):/i.test(title)) return;
-    const allDay = !!w.date;
+    const allDay = !!w.date || /^TRUE$/i.test(val(e, 'X-MICROSOFT-CDO-ALLDAYEVENT'));
     let s, en;
     if (allDay) {
       s = toEpoch({ ...w, h: 0, mi: 0, s: 0 }, 'local');
@@ -170,7 +170,10 @@ export function buildEvents(text, calId, fromMs, toMs, tz) {
     } else { s = toEpoch(w, w.tz); en = s + Math.max(0, durMs); }
     if (en <= fromMs && !(en === s && s >= fromMs)) return;
     if (s >= toMs) return;
-    out.push({ cal: calId, title, loc: unesc(val(e, 'LOCATION')), allDay, s, e: en, free: /^FREE$/i.test(val(e, 'X-MICROSOFT-CDO-BUSYSTATUS')) });
+    // Outlook's "Show as": FREE, TENTATIVE, BUSY or OOF (out of office)
+    const status = (val(e, 'X-MICROSOFT-CDO-BUSYSTATUS') || val(e, 'X-MICROSOFT-CDO-INTENDEDSTATUS') || '').toUpperCase();
+    const free = status === 'FREE' || (!status && /^TRANSPARENT$/i.test(val(e, 'TRANSP')));
+    out.push({ cal: calId, title, loc: unesc(val(e, 'LOCATION')), allDay, s, e: en, free, status });
   };
   for (const e of events) {
     if (/CANCELLED/i.test(val(e, 'STATUS'))) continue;

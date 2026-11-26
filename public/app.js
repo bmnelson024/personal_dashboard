@@ -42,6 +42,10 @@ function timeParts(ms) {
 const timeStr = ms => timeParts(ms).join(' ');
 // Hold blocks Brian adds so one company can't book over another's meeting. Hidden from the dashboard's upcoming list only.
 const isBlocker = e => /^\s*unavailable\b/i.test(e.title || '');
+// Out-of-office and whole-day holds aren't meetings: Outlook "Show as: Out of office", or a block of 10+ hours.
+const isLong = e => !e.allDay && e.e - e.s >= 10 * 36e5;
+const isAway = e => e.status === 'OOF' || isLong(e) || /^\s*(out of (the )?office|ooo|pto|vacation|holiday)\b/i.test(e.title || '');
+const dayLevel = e => e.allDay || isLong(e);
 // Calendars Brian uses Unavailable blocks on. Remembered across loads so a quiet week doesn't drop one.
 const blockCals = new Set(JSON.parse(localStorage.getItem('db:blockCals') || '[]'));
 /* Returns Map(event -> [calendar ids missing an Unavailable]) for bookings that still need one. */
@@ -59,7 +63,7 @@ function findGaps(events) {
   const covered = (c, s, e) => (cover[c] || []).some(([a, b]) => a <= s + 60000 && b >= e - 60000);
   const gaps = new Map(), now = Date.now();
   for (const e of events) {
-    if (isBlocker(e) || e.allDay || e.free || e.e <= now) continue;
+    if (isBlocker(e) || isAway(e) || e.allDay || e.free || e.e <= now) continue;
     const miss = [...blockCals].filter(c => !e.cals.includes(c) && S.cals.some(x => x.id === c && x.on !== false) && !covered(c, e.s, e.e));
     if (miss.length) gaps.set(e, miss);
   }
@@ -111,7 +115,7 @@ const openTasks = () => S.tasks.filter(t => !t.done);
 function renderHeader() {
   $('today').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const tk = todayK(), t1 = addDays(todayD(), 1).getTime();
-  const left = S.events.filter(e => !e.allDay && !isBlocker(e) && e.e > Date.now() && e.s < t1).length;
+  const left = S.events.filter(e => !e.allDay && !isBlocker(e) && !isAway(e) && e.e > Date.now() && e.s < t1).length;
   const gapN = S.cals.length ? findGaps(S.events).size : 0;
   const ot = openTasks(), due = ot.filter(t => t.due === tk).length, late = ot.filter(t => t.due && t.due < tk).length;
   const bits = [];
@@ -147,10 +151,10 @@ function renderAgenda() {
   const t0 = todayD().getTime(), t1 = addDays(todayD(), 1).getTime(), now = Date.now();
   const day = S.events.filter(e => e.s < t1 && e.e > t0 && !isBlocker(e));
   const gaps = findGaps(S.events);
-  const ad = day.filter(e => e.allDay), tm = day.filter(e => !e.allDay);
+  const ad = day.filter(dayLevel), tm = day.filter(e => !dayLevel(e));
   let html = errs ? `<p class="banner">${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh. Check Settings.</p>` : '';
-  if (ad.length) html += `<div class="allday">${ad.map(e => `<span class="ad"><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span>${esc(e.title)}</span>`).join('')}</div>`;
-  if (!tm.length) html += `<div class="empty"><p>Nothing on the calendar today.</p></div>`;
+  if (ad.length) html += `<div class="allday">${ad.map(e => `<span class="ad${isAway(e) ? ' away' : ''}"><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span>${esc(e.title)}${e.status === 'OOF' && !/out of|ooo/i.test(e.title) ? ' · Out of office' : ''}</span>`).join('')}</div>`;
+  if (!tm.length) html += `<div class="empty"><p>${ad.some(isAway) ? 'No meetings today. You\'re marked out of office.' : 'Nothing on the calendar today.'}</p></div>`;
   let placed = false;
   for (const ev of tm) {
     if (!placed && ev.s > now) { html += `<div class="now">Now ${esc(timeStr(now))}</div>`; placed = true; }
@@ -168,7 +172,7 @@ function renderWeek() {
     n++;
     const evs = S.events.filter(e => e.s < b && e.e > a && !isBlocker(e));
     const due = openTasks().filter(t => t.due === k).length;
-    const items = evs.slice(0, 6).map(e => `<li><span class="tm">${e.allDay ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
+    const items = evs.slice(0, 6).map(e => `<li><span class="tm">${dayLevel(e) ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
     if (evs.length > 6) items.push(`<li class="note">${evs.length - 6} more</li>`);
     if (due) items.push(`<li class="due">${due} ${due === 1 ? 'to-do' : 'to-dos'} due</li>`);
     if (!items.length) items.push(`<li class="note">${S.cals.length ? 'Open' : 'No to-dos due'}</li>`);
@@ -373,12 +377,12 @@ function renderTimeGrid(days) {
   const head = days.map(d => `<div class="${keyOf(d) === tk ? 'td' : ''}"><button type="button" data-day="${keyOf(d)}">${WD[d.getDay()]}<b>${d.getDate()}</b></button></div>`).join('');
   const all = days.map(d => {
     const a = d.getTime(), b = addDays(d, 1).getTime();
-    return `<div>${evs.filter(e => e.allDay && e.s < b && e.e > a).map(e => evBtn('ab', e, esc(e.title))).join('')}</div>`;
+    return `<div>${evs.filter(e => dayLevel(e) && e.s < b && e.e > a).map(e => evBtn('ab', e, esc(e.title))).join('')}</div>`;
   }).join('');
   const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * HH}px">${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}</span>`).join('');
   const cols = days.map(d => {
     const a = d.getTime(), b = addDays(d, 1).getTime();
-    const items = layoutDay(evs.filter(e => !e.allDay && e.s < b && e.e > a).map(e => ({ ...e, s: Math.max(e.s, a), e: Math.min(Math.max(e.e, e.s + 15 * 60000), b), orig: e })));
+    const items = layoutDay(evs.filter(e => !dayLevel(e) && e.s < b && e.e > a).map(e => ({ ...e, s: Math.max(e.s, a), e: Math.min(Math.max(e.e, e.s + 15 * 60000), b), orig: e })));
     const blocks = items.map(x => {
       const top = (x.s - a) / 36e5 * HH, h = Math.max(20, (x.e - x.s) / 36e5 * HH - 2);
       const w = 100 / x._n, l = x._col * w;
@@ -397,8 +401,8 @@ function renderMonth() {
     const d = addDays(a, i), k = keyOf(d), s = d.getTime(), e = addDays(d, 1).getTime();
     if (!CV.weekends && (d.getDay() === 0 || d.getDay() === 6)) continue;
     const pos = cells.length, rc = `${pos % ncol === 0 ? ' c0' : ''}${pos < ncol ? ' r0' : ''}`;
-    const day = evs.filter(x => x.s < e && x.e > s).sort((x, y) => (y.allDay - x.allDay) || x.s - y.s);
-    const shown = day.slice(0, 3).map(x => evBtn(`me${x.allDay ? ' alld' : ''}`, x, `<span class="dot" style="--c:${esc(evColor(x))}"></span>${x.allDay ? '' : `<span class="tm">${esc(timeStr(x.s).replace(':00', ''))}</span>`}<span class="nm">${esc(x.title)}</span>`)).join('');
+    const day = evs.filter(x => x.s < e && x.e > s).sort((x, y) => (dayLevel(y) - dayLevel(x)) || x.s - y.s);
+    const shown = day.slice(0, 3).map(x => evBtn(`me${dayLevel(x) ? ' alld' : ''}`, x, `<span class="dot" style="--c:${esc(evColor(x))}"></span>${dayLevel(x) ? '' : `<span class="tm">${esc(timeStr(x.s).replace(':00', ''))}</span>`}<span class="nm">${esc(x.title)}</span>`)).join('');
     const more = day.length > 3 ? `<button type="button" class="more" data-day="${k}"><span class="ml">${day.length - 3} more</span><span class="ms">+${day.length - 3}</span></button>` : '';
     const due = openTasks().filter(t => t.due === k).length;
     cells.push(`<div class="mc${rc}${d.getMonth() !== m ? ' oth' : ''}${k === tk ? ' td' : ''}"><button type="button" class="dn" data-day="${k}" aria-label="${esc(d.toDateString())}">${d.getDate()}</button>${shown}${more}${due ? `<span class="mtd">${due} ${due === 1 ? 'to-do' : 'to-dos'}</span>` : ''}</div>`);
@@ -444,7 +448,7 @@ function showEvent(e) {
   $('evLoc').textContent = e.loc || ''; $('evLoc').hidden = !e.loc;
   const miss = CV.gaps && CV.gaps.get(e);
   $('evWarn').textContent = miss ? `No Unavailable block on ${calNames(miss)} for this time.` : ''; $('evWarn').hidden = !miss;
-  $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.free ? ' · shown as free' : '');
+  $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.status === 'OOF' ? ' · Out of office' : e.status === 'TENTATIVE' ? ' · Tentative' : e.free ? ' · shown as free' : '');
   $('evOv').classList.add('open');
 }
 function setView(v) {

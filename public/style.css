@@ -176,3 +176,4 @@ input[type=time]{font-size:16px;min-height:44px;padding:8px 10px;border:1px soli
 .eb .gi{float:left;margin-top:1px}
 .note.warnt{color:var(--red);font-weight:600}
 .sum .lnk{font-size:inherit;min-height:0;padding:0}
+.ad.away{background:color-mix(in srgb,var(--slate) 14%,var(--bg));font-weight:500}
