@@ -10,7 +10,7 @@ const DEFAULT_AREAS = [
   { id: 'me', name: 'Personal', color: '#5b6670' }
 ];
 const CAL_COLORS = ['#2e6f8e', '#e3120b', '#6a4fb0', '#b4681c', '#0f8a8a', '#5b6670'];
-const S = { pev: [], remote: [], tasks: [], areas: DEFAULT_AREAS, filter: 'all', search: '', cals: [], events: [], calState: 'init', calErr: {}, calAt: null, tasksState: 'loading', session: null, lastArea: null };
+const S = { pev: [], remote: [], tasks: [], areas: DEFAULT_AREAS, sel: new Set(), search: '', cals: [], events: [], calState: 'init', calErr: {}, calAt: null, tasksState: 'loading', session: null, lastArea: null };
 let sb = null;
 
 /* ---------- local cache, for instant paint and offline viewing ---------- */
@@ -242,13 +242,15 @@ function areaOptions(sel) {
 }
 function renderChips() {
   const ot = openTasks();
-  const chip = (id, name, n, color) => `<button class="chip" type="button" data-f="${esc(id)}" aria-pressed="${S.filter === id}">${color ? `<span class="dot" style="--c:${esc(color)}"></span>` : ''}${esc(name)} <span class="n">${n}</span></button>`;
+  // S.sel holds the chosen businesses ('' = Unfiled); empty means All
+  for (const id of [...S.sel]) if (id !== '' && !S.areas.some(a => a.id === id)) S.sel.delete(id); // drop removed businesses
+  const chip = (id, name, n, color) => `<button class="chip" type="button" data-f="${esc(id)}" aria-pressed="${id === 'all' ? S.sel.size === 0 : S.sel.has(id)}">${color ? `<span class="dot" style="--c:${esc(color)}"></span>` : ''}${esc(name)} <span class="n">${n}</span></button>`;
   const list = [chip('all', 'All', ot.length)].concat(S.areas.map(a => chip(a.id, a.name, ot.filter(t => t.area === a.id).length, a.color)));
   const unf = ot.filter(t => !S.areas.some(a => a.id === t.area)).length;
   if (unf) list.push(chip('', 'Unfiled', unf, '#8a949c'));
   $('chips').innerHTML = list.join('');
   const cur = $('qArea').value;
-  $('qArea').innerHTML = areaOptions(S.filter !== 'all' ? S.filter : (cur || S.lastArea || 'me'));
+  $('qArea').innerHTML = areaOptions(S.sel.size === 1 ? [...S.sel][0] : (cur || S.lastArea || 'me'));
 }
 function taskRow(t) {
   const a = areaById(t.area), late = !t.done && t.due && t.due < todayK();
@@ -258,7 +260,8 @@ function renderTodos() {
   const el = $('todos');
   if (S.tasksState === 'loading' && !S.tasks.length) { el.innerHTML = '<p class="note">Loading to-dos…</p>'; return; }
   const q = S.search.toLowerCase();
-  const inF = t => (S.filter === 'all' || t.area === S.filter || (S.filter === '' && !S.areas.some(a => a.id === t.area))) && (!q || (t.title + ' ' + (t.notes || '')).toLowerCase().includes(q));
+  const areaKey = t => S.areas.some(a => a.id === t.area) ? t.area : '';
+  const inF = t => (S.sel.size === 0 || S.sel.has(areaKey(t))) && (!q || (t.title + ' ' + (t.notes || '')).toLowerCase().includes(q));
   const tk = todayK(), wk = keyOf(addDays(todayD(), 7));
   const sort = (a, b) => (b.pri | 0) - (a.pri | 0) || (a.due || '9999').localeCompare(b.due || '9999') || (a.created || 0) - (b.created || 0);
   const open = openTasks().filter(inF).sort(sort);
@@ -811,7 +814,16 @@ $('addForm').addEventListener('submit', e => {
   addTask({ title: p.title, area, pri: p.pri, due: p.due || $('qDue').value || null, notes: '' });
   $('q').value = ''; $('qDue').value = '';
 });
-$('chips').addEventListener('click', e => { const b = e.target.closest('[data-f]'); if (!b) return; S.filter = b.dataset.f; renderChips(); renderTodos(); });
+$('chips').addEventListener('click', e => {
+  const b = e.target.closest('[data-f]'); if (!b) return;
+  const id = b.dataset.f;
+  if (id === 'all') S.sel.clear(); else if (S.sel.has(id)) S.sel.delete(id); else S.sel.add(id);
+  // every business picked is the same as All
+  const everyId = [...S.areas.map(a => a.id), ...(S.tasks.some(t => !t.done && !S.areas.some(a => a.id === t.area)) ? [''] : [])];
+  if (S.sel.size && everyId.every(x => S.sel.has(x))) S.sel.clear();
+  cache.set('todoFilter', [...S.sel]);
+  renderChips(); renderTodos();
+});
 $('search').addEventListener('input', e => { S.search = e.target.value; renderTodos(); });
 $('todos').addEventListener('click', e => {
   const li = e.target.closest('.task'); if (!li) return;
@@ -915,6 +927,7 @@ async function start(session) {
   if (started) return; started = true;
   S.tasks = cache.get('tasks') || []; if (S.tasks.length) S.tasksState = 'cached';
   S.areas = cache.get('areas') || DEFAULT_AREAS;
+  S.sel = new Set(cache.get('todoFilter') || []);
   S.cals = cache.get('cals') || [];
   S.pev = cache.get('pev') || [];
   const ev = cache.get('events'); if (ev && ev.day === todayK()) { S.remote = ev.events; S.calAt = ev.at; S.calState = 'ready'; }
