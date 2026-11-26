@@ -596,7 +596,7 @@ function ftRange() {
   return [t, addDays(mon, 14)];
 }
 function openFind() {
-  const saved = cache.get('ftPrefs') || {};
+  const saved = cache.get('ftPrefs2') || {};
   for (const k of ['ftLen', 'ftRange', 'ftGap', 'ftFrom', 'ftTo']) if (saved[k]) $(k).value = saved[k];
   const off = new Set(saved.off || []);
   $('ftCals').innerHTML = allCals().filter(c => !c.builtin || S.pev.length).map(c => `<label><input type="checkbox" value="${esc(c.id)}"${off.has(c.id) ? '' : ' checked'}><span>${esc(c.name)}</span></label>`).join('');
@@ -609,7 +609,7 @@ $('ftForm').addEventListener('submit', async e => {
   const len = +$('ftLen').value * 60000, gap = +$('ftGap').value * 60000;
   const [fh, fm] = $('ftFrom').value.split(':').map(Number), [th, tm] = $('ftTo').value.split(':').map(Number);
   const busyCals = new Set([...$('ftCals').querySelectorAll('input:checked')].map(b => b.value));
-  cache.set('ftPrefs', { ftLen: $('ftLen').value, ftRange: $('ftRange').value, ftGap: $('ftGap').value, ftFrom: $('ftFrom').value, ftTo: $('ftTo').value, off: allCals().map(c => c.id).filter(id => !busyCals.has(id)) });
+  cache.set('ftPrefs2', { ftLen: $('ftLen').value, ftRange: $('ftRange').value, ftGap: $('ftGap').value, ftFrom: $('ftFrom').value, ftTo: $('ftTo').value, off: allCals().map(c => c.id).filter(id => !busyCals.has(id)) });
   const [a, b] = ftRange();
   $('ftOut').innerHTML = '<p class="none">Checking your calendars…</p>';
   let events;
