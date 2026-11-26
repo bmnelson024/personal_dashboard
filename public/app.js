@@ -40,6 +40,8 @@ function timeParts(ms) {
   return [`${h}:${pad(d.getMinutes())}`, ap];
 }
 const timeStr = ms => timeParts(ms).join(' ');
+// Hold blocks Brian adds so one company can't book over another's meeting. Hidden from the dashboard's upcoming list only.
+const isBlocker = e => /^\s*unavailable\b/i.test(e.title || '');
 
 /* ---------- calendars ---------- */
 function dedupe(list) {
@@ -137,7 +139,7 @@ function renderWeek() {
     const d = addDays(todayD(), i), k = keyOf(d), a = d.getTime(), b = addDays(d, 1).getTime();
     if (!wk && (d.getDay() === 0 || d.getDay() === 6)) continue;
     n++;
-    const evs = S.events.filter(e => e.s < b && e.e > a);
+    const evs = S.events.filter(e => e.s < b && e.e > a && !isBlocker(e));
     const due = openTasks().filter(t => t.due === k).length;
     const items = evs.slice(0, 6).map(e => `<li><span class="tm">${e.allDay ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
     if (evs.length > 6) items.push(`<li class="note">${evs.length - 6} more</li>`);
