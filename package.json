@@ -1,0 +1,7 @@
+{
+  "name": "day-book",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/ical.test.mjs"
+  }
+}

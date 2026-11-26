@@ -149,6 +149,19 @@ function expandDays(rule, dt, endDn) {
   return out.filter(dn => dn <= endDn);
 }
 
+// Online meeting links: Teams, Zoom, Google Meet, Webex, GoTo.
+const JOIN_HOST = /(^|\.)(teams\.microsoft\.com|teams\.live\.com|zoom\.us|zoomgov\.com|meet\.google\.com|webex\.com|gotomeeting\.com|meet\.goto\.com)$/i;
+function findJoin(e, val) {
+  const sources = ['X-MICROSOFT-SKYPETEAMSMEETINGURL', 'X-MICROSOFT-ONLINEMEETINGCONFLINK', 'X-MICROSOFT-ONLINEMEETINGEXTERNALLINK', 'URL', 'LOCATION', 'DESCRIPTION'];
+  for (const name of sources) {
+    const text = (val(e, name) || '').replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1');
+    for (const m of text.matchAll(/https:\/\/[^\s<>"')\]]+/gi)) {
+      try { const u = new URL(m[0].replace(/[.,;]+$/, '')); if (JOIN_HOST.test(u.hostname) && u.pathname.length > 1) return u.href; } catch {}
+    }
+  }
+  return '';
+}
+
 /** Events from one ICS feed overlapping [fromMs, toMs), with times as epoch ms. */
 export function buildEvents(text, calId, fromMs, toMs, tz) {
   USER_TZ = tz && validTz(tz) ? tz : 'America/Chicago';
@@ -173,7 +186,7 @@ export function buildEvents(text, calId, fromMs, toMs, tz) {
     // Outlook's "Show as": FREE, TENTATIVE, BUSY or OOF (out of office)
     const status = (val(e, 'X-MICROSOFT-CDO-BUSYSTATUS') || val(e, 'X-MICROSOFT-CDO-INTENDEDSTATUS') || '').toUpperCase();
     const free = status === 'FREE' || (!status && /^TRANSPARENT$/i.test(val(e, 'TRANSP')));
-    out.push({ cal: calId, title, loc: unesc(val(e, 'LOCATION')), allDay, s, e: en, free, status });
+    out.push({ cal: calId, title, loc: unesc(val(e, 'LOCATION')), allDay, s, e: en, free, status, join: findJoin(e, val) });
   };
   for (const e of events) {
     if (/CANCELLED/i.test(val(e, 'STATUS'))) continue;

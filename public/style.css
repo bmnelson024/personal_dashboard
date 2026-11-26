@@ -32,7 +32,7 @@ h2{font:600 24px/1.1 "Source Serif 4",Georgia,serif;margin:0 0 4px;letter-spacin
 .note{color:var(--mute);font-size:14px}
 .allday{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px}
 .ad{font-size:14px;padding:4px 10px;border-radius:4px;background:var(--panel);display:flex;gap:6px;align-items:center}
-.ev{display:grid;grid-template-columns:5.2em minmax(0,1fr);gap:12px;padding:10px 0;border-top:1px solid var(--rule)}
+.ev{display:grid;grid-template-columns:5.2em minmax(0,1fr) auto;align-items:start;gap:12px;padding:10px 0;border-top:1px solid var(--rule)}
 .ev:first-of-type{border-top:0}
 .ev .t{font:500 26px/1 "Source Serif 4",Georgia,serif;white-space:nowrap;text-align:right;letter-spacing:-.02em}
 .ev .t small{font:500 12px Inter,sans-serif;color:var(--mute);margin-left:2px}
@@ -194,3 +194,8 @@ main{grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,5fr);gap:0 36px}
 .daypick input:checked+span{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .daypick input:focus-visible+span{outline:2px solid var(--slate);outline-offset:2px}
 select:disabled{opacity:.7}
+.join{align-self:center;display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--rule);font-size:14px;font-weight:600;color:var(--ink);text-decoration:none;white-space:nowrap}
+.join:hover{border-color:var(--ink)}
+.join.soon{background:var(--slate);border-color:var(--slate);color:#fff}
+a.btn{display:inline-flex;align-items:center;text-decoration:none}
+.eb.hasjoin b::after{content:" \25B8";font-weight:400;opacity:.6}

@@ -185,13 +185,14 @@ function renderHeader() {
   if ('setAppBadge' in navigator) { (due + late ? navigator.setAppBadge(due + late) : navigator.clearAppBadge()).catch(() => {}); }
 }
 const calNames = ids => ids.map(c => calById(c).name).join(', ');
+const joinUrl = e => (e && /^https:\/\//i.test(e.join || '')) ? e.join : '';
 function evRow(ev, now, miss) {
   const [t, ap] = ev.allDay ? ['All', 'day'] : timeParts(ev.s);
   const cls = ev.e <= now ? 'past' : (ev.s <= now ? 'live' : '');
   const dots = ev.cals.map(id => `<span class="dot" style="--c:${esc(calById(id).color)}"></span>`).join('');
   const names = ev.cals.map(id => esc(calById(id).name)).join(' + ');
   const sub = [ev.allDay ? '' : `until ${esc(timeStr(ev.e))}`, ev.loc ? esc(ev.loc) : '', ev.free ? 'free' : ''].filter(Boolean).join(' · ');
-  return `<div class="ev ${cls}"><div class="t">${esc(t)}<small>${esc(ap)}</small></div><div><div class="ttl">${esc(ev.title)}</div><div class="sub"><span class="cals">${dots}</span>${names}${sub ? ' · ' + sub : ''}</div>${miss ? `<div class="gapw">No Unavailable on ${esc(calNames(miss))}</div>` : ''}</div></div>`;
+  return `<div class="ev ${cls}"><div class="t">${esc(t)}<small>${esc(ap)}</small></div><div><div class="ttl">${esc(ev.title)}</div><div class="sub"><span class="cals">${dots}</span>${names}${sub ? ' · ' + sub : ''}</div>${miss ? `<div class="gapw">No Unavailable on ${esc(calNames(miss))}</div>` : ''}</div>${joinUrl(ev) && ev.e > now ? `<a class="join${ev.s - now < 10 * 60000 ? ' soon' : ''}" href="${esc(joinUrl(ev))}" target="_blank" rel="noopener">Join</a>` : ''}</div>`;
 }
 function renderAgenda() {
   const el = $('agenda');
@@ -401,8 +402,12 @@ function cvTitle() {
   const [a, b] = cvRange(), e = addDays(b, -1);
   return a.getMonth() === e.getMonth() ? `${MO[a.getMonth()]} ${a.getDate()} to ${e.getDate()}, ${e.getFullYear()}` : `${MO[a.getMonth()]} ${a.getDate()} to ${MO[e.getMonth()]} ${e.getDate()}, ${e.getFullYear()}`;
 }
+// Feeds are downloaded once per six-week month window; day and week views reuse it.
+function cvWindow() { const first = new Date(CV.date.getFullYear(), CV.date.getMonth(), 1), a = addDays(first, -first.getDay()); return [a, addDays(a, 42)]; }
+function cvHit() { const [a, b] = cvWindow(); return CV.store[a.getTime() + '-' + b.getTime()]; }
+const inView = list => { const [a, b] = cvRange(); return list.filter(e => e.s < b.getTime() && e.e > a.getTime()); };
 async function cvLoad(force) {
-  const [a, b] = cvRange(), key = a.getTime() + '-' + b.getTime(), hit = CV.store[key];
+  const [a, b] = cvWindow(), key = a.getTime() + '-' + b.getTime(), hit = CV.store[key];
   if (!S.cals.length) { CV.store[key] = { events: [], at: 0, errors: {} }; renderCal(); return; } // at: 0 so it refetches once calendars load
   if (hit && !force && Date.now() - hit.at < 10 * 60000) { renderCal(); return; }
   CV.loading = true; renderCal();
@@ -411,12 +416,13 @@ async function cvLoad(force) {
   CV.loading = false; renderCal();
 }
 function cvEvents() {
-  const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
-  return [...(hit ? hit.events : []), ...expandPersonal(a, b)].sort((x, y) => x.s - y.s).filter(e => e.cals.some(c => !CV.hidden.has(c)));
+  const [a, b] = cvRange(), hit = cvHit();
+  return [...(hit ? inView(hit.events) : []), ...expandPersonal(a, b)].sort((x, y) => x.s - y.s).filter(e => e.cals.some(c => !CV.hidden.has(c)));
 }
 const evColor = e => calById(e.cals.find(c => !CV.hidden.has(c)) || e.cal).color;
 function evBtn(cls, e, inner, style) {
   CV.list.push(e);
+  if (joinUrl(e)) cls += ' hasjoin';
   if (CV.gaps && CV.gaps.has(e)) { cls += ' gap'; inner = '<i class="gi" aria-label="Needs an Unavailable">!</i>' + inner; }
   return `<button type="button" class="${cls}" data-k="${CV.list.length - 1}" style="--c:${esc(evColor(e))};${style || ''}">${inner}</button>`;
 }
@@ -478,12 +484,12 @@ function renderMonth() {
 function renderCal() {
   if ($('calView').hidden) return;
   CV.list = [];
-  { const [ga, gb] = cvRange(), gh = CV.store[ga.getTime() + '-' + gb.getTime()]; CV.gaps = gh && S.cals.length ? findGaps(gh.events) : new Map(); }
+  { const gh = cvHit(); CV.gaps = gh && S.cals.length ? findGaps(gh.events) : new Map(); for (const e of [...CV.gaps.keys()]) if (!inView([e]).length) CV.gaps.delete(e); }
   $('cTitle').textContent = cvTitle();
   for (const b of $('cViews').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === CV.view);
   $('cWeekends').setAttribute('aria-pressed', CV.weekends);
   $('cLegend').innerHTML = allCals().filter(c => !c.builtin || S.pev.length).map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
-  const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
+  const [a, b] = cvRange(), hit = cvHit();
   const errs = hit ? Object.keys(hit.errors || {}).length : 0;
   const gn = CV.gaps.size;
   $('cStatus').textContent = !hasCals() ? 'No calendars yet. Add them in Settings, or add a Personal event.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : gn ? `${gn} ${gn === 1 ? 'booking is' : 'bookings are'} missing an Unavailable block (marked with !).` : '';
@@ -516,6 +522,7 @@ function showEvent(e) {
   const miss = CV.gaps && CV.gaps.get(e);
   $('evWarn').textContent = miss ? `No Unavailable block on ${calNames(miss)} for this time.` : ''; $('evWarn').hidden = !miss;
   $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.status === 'OOF' ? ' · Out of office' : e.status === 'TENTATIVE' ? ' · Tentative' : e.free ? ' · shown as free' : '');
+  const ju = joinUrl(e); $('evJoin').hidden = !ju; if (ju) $('evJoin').href = ju;
   $('evEdit').hidden = !e.personal; $('evSkip').hidden = !(e.personal && S.pev.find(v => v.id === e.pid)?.days);
   CV.cur = e;
   $('evOv').classList.add('open');
