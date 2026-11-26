@@ -64,7 +64,8 @@ function findGaps(events) {
   const gaps = new Map(), now = Date.now();
   for (const e of events) {
     if (e.personal || isBlocker(e) || isAway(e) || e.allDay || e.free || e.e <= now) continue;
-    const miss = [...blockCals].filter(c => !e.cals.includes(c) && S.cals.some(x => x.id === c && x.on !== false) && !covered(c, e.s, e.e));
+    // a calendar is checked only if it's shown and its 'Check for Unavailable blocks' switch is on
+    const miss = [...blockCals].filter(c => !e.cals.includes(c) && S.cals.some(x => x.id === c && x.on !== false && x.needs !== false) && !covered(c, e.s, e.e));
     if (miss.length) gaps.set(e, miss);
   }
   return gaps;
@@ -326,7 +327,7 @@ async function loadSettings() {
     sb.from('calendars').select('*').order('sort')
   ]);
   S.areas = st && Array.isArray(st.areas) && st.areas.length ? st.areas : DEFAULT_AREAS;
-  if (!error) S.cals = cals.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled }));
+  if (!error) { S.cals = cals.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled, needs: c.needs_blocks !== false })); S.needsCol = cals.length === 0 || 'needs_blocks' in cals[0]; }
   cache.set('areas', S.areas); cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
 }
 
@@ -368,7 +369,8 @@ async function openSettings(tab) {
 }
 function showTab(t) { $('tabCal').setAttribute('aria-pressed', t === 'cal'); $('tabArea').setAttribute('aria-pressed', t === 'area'); $('paneCal').hidden = t !== 'cal'; $('paneArea').hidden = t !== 'area'; }
 function renderCalRows() {
-  $('calRows').innerHTML = draftCals.map((c, i) => `<div class="crow" data-i="${i}"><input type="color" value="${esc(c.color)}" data-k="color" aria-label="Color"><div class="urls"><input type="text" value="${esc(c.name)}" data-k="name" placeholder="Name, e.g. White Oak" aria-label="Calendar name"><input type="url" value="${esc(c.url)}" data-k="url" placeholder="https://outlook.office365.com/owa/calendar/…/calendar.ics" aria-label="ICS link"><div class="st${S.calErr[c.id] ? ' err' : ''}">${S.calErr[c.id] ? esc(S.calErr[c.id]) : (c.url && S.cals.some(x => x.id === c.id) ? 'Saved' : '')}</div></div><div><label class="chkl"><input type="checkbox" data-k="on"${c.on !== false ? ' checked' : ''}> Show</label><button class="btn warn" type="button" data-rm="${i}">Remove</button></div></div>`).join('') || '<p class="note">No calendars yet.</p>';
+  $('needsNote').hidden = S.needsCol !== false;
+  $('calRows').innerHTML = draftCals.map((c, i) => `<div class="crow" data-i="${i}"><input type="color" value="${esc(c.color)}" data-k="color" aria-label="Color"><div class="urls"><input type="text" value="${esc(c.name)}" data-k="name" placeholder="Name, e.g. White Oak" aria-label="Calendar name"><input type="url" value="${esc(c.url)}" data-k="url" placeholder="https://outlook.office365.com/owa/calendar/…/calendar.ics" aria-label="ICS link"><div class="st${S.calErr[c.id] ? ' err' : ''}">${S.calErr[c.id] ? esc(S.calErr[c.id]) : (c.url && S.cals.some(x => x.id === c.id) ? 'Saved' : '')}</div></div><div><label class="chkl"><input type="checkbox" data-k="on"${c.on !== false ? ' checked' : ''}> Show</label><label class="chkl" title="Turn off for calendars people can't book you on directly. Meetings on this calendar still need Unavailable blocks on the others."><input type="checkbox" data-k="needs"${c.needs !== false ? ' checked' : ''}${S.needsCol === false ? ' disabled' : ''}> Check for Unavailable</label><button class="btn warn" type="button" data-rm="${i}">Remove</button></div></div>`).join('') || '<p class="note">No calendars yet.</p>';
 }
 function renderAreaRows() {
   $('areaRows').innerHTML = draftAreas.map((a, i) => `<div class="crow" data-i="${i}"><input type="color" value="${esc(a.color)}" data-k="color" aria-label="Color"><input type="text" value="${esc(a.name)}" data-k="name" aria-label="Business name"><button class="btn warn" type="button" data-rm="${i}">Remove</button></div>`).join('');
@@ -672,12 +674,12 @@ bindRows($('calRows'), () => draftCals, renderCalRows);
 bindRows($('areaRows'), () => draftAreas, renderAreaRows);
 $('calAdd').addEventListener('click', () => { draftCals.push({ id: crypto.randomUUID(), name: '', url: '', color: CAL_COLORS[draftCals.length % CAL_COLORS.length], on: true }); renderCalRows(); });
 $('calSave').addEventListener('click', async () => {
-  const keep = draftCals.filter(c => c.url.trim()).map((c, i) => ({ id: c.id, name: c.name.trim() || 'Calendar', url: c.url.trim(), color: c.color, enabled: c.on !== false, sort: i }));
+  const keep = draftCals.filter(c => c.url.trim()).map((c, i) => ({ id: c.id, name: c.name.trim() || 'Calendar', url: c.url.trim(), color: c.color, enabled: c.on !== false, sort: i, ...(S.needsCol === false ? {} : { needs_blocks: c.needs !== false }) }));
   const removed = S.cals.filter(c => !keep.some(k => k.id === c.id)).map(c => c.id);
   $('calSetNote').textContent = 'Saving…';
   if (removed.length) { const { error } = await sb.from('calendars').delete().in('id', removed); if (error) { $('calSetNote').textContent = 'Could not save: ' + error.message; return; } }
   if (keep.length) { const { error } = await sb.from('calendars').upsert(keep); if (error) { $('calSetNote').textContent = 'Could not save: ' + error.message; return; } }
-  S.cals = keep.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled }));
+  S.cals = keep.map(c => ({ id: c.id, name: c.name, url: c.url, color: c.color, on: c.enabled, needs: c.needs_blocks !== false }));
   cache.set('cals', S.cals.map(({ url, ...rest }) => rest));
   draftCals = S.cals.map(c => ({ ...c }));
   $('calSetNote').textContent = 'Refreshing…';

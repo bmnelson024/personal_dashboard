@@ -76,3 +76,6 @@ create policy "own personal events" on public.personal_events for all to authent
 do $$ begin
   alter publication supabase_realtime add table public.personal_events;
 exception when duplicate_object then null; end $$;
+
+-- Per-calendar switch for the missing-Unavailable check (added Nov 2026).
+alter table public.calendars add column if not exists needs_blocks boolean not null default true;
