@@ -129,7 +129,7 @@
     <p id="evLoc" class="note"></p>
     <p id="evCal" class="note"></p>
     <p id="evWarn" class="gapw" hidden></p>
-    <div class="acts"><button class="btn" type="button" id="evClose">Close</button></div>
+    <div class="acts"><button class="btn warn" type="button" id="evSkip" hidden>Remove this date only</button><span class="sp"></span><button class="btn" type="button" id="evEdit" hidden>Edit</button><button class="btn" type="button" id="evClose">Close</button></div>
   </div>
 </div>
 
@@ -144,10 +144,17 @@
       <label class="fld neT">Start<input type="time" id="neStart" step="900"></label>
       <label class="fld neT">End<input type="time" id="neEnd" step="900"></label>
     </div>
+    <div id="neRep" hidden>
+      <label class="fld">Repeat<select id="neRepeat"><option value="">Does not repeat</option><option value="weekly">Weekly on certain days</option><option value="weekdays">Every weekday</option><option value="daily">Every day</option></select></label>
+      <div class="daypick" id="neDays" role="group" aria-label="Repeat on">
+        <label><input type="checkbox" value="0"><span>Sun</span></label><label><input type="checkbox" value="1"><span>Mon</span></label><label><input type="checkbox" value="2"><span>Tue</span></label><label><input type="checkbox" value="3"><span>Wed</span></label><label><input type="checkbox" value="4"><span>Thu</span></label><label><input type="checkbox" value="5"><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label>
+      </div>
+      <label class="fld" id="neUntilF">Until (optional)<input type="date" id="neUntil"></label>
+    </div>
     <label class="fld">Location<input type="text" id="neLoc" placeholder="Optional"></label>
     <label class="fld">Notes<textarea id="neNotes" placeholder="Optional"></textarea></label>
     <p class="note" id="neHelp"></p>
-    <div class="acts"><button class="btn" type="button" id="neCancel">Cancel</button><button class="btn pri" type="submit">Open in Outlook</button></div>
+    <div class="acts"><button class="btn warn" type="button" id="neDel" hidden>Delete</button><span class="sp"></span><button class="btn" type="button" id="neCancel">Cancel</button><button class="btn pri" type="submit" id="neSubmit">Open in Outlook</button></div>
   </form>
 </div>
 

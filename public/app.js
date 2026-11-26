@@ -10,7 +10,7 @@ const DEFAULT_AREAS = [
   { id: 'me', name: 'Personal', color: '#5b6670' }
 ];
 const CAL_COLORS = ['#2e6f8e', '#e3120b', '#6a4fb0', '#b4681c', '#0f8a8a', '#5b6670'];
-const S = { tasks: [], areas: DEFAULT_AREAS, filter: 'all', search: '', cals: [], events: [], calState: 'init', calErr: {}, calAt: null, tasksState: 'loading', session: null, lastArea: null };
+const S = { pev: [], remote: [], tasks: [], areas: DEFAULT_AREAS, filter: 'all', search: '', cals: [], events: [], calState: 'init', calErr: {}, calAt: null, tasksState: 'loading', session: null, lastArea: null };
 let sb = null;
 
 /* ---------- local cache, for instant paint and offline viewing ---------- */
@@ -63,7 +63,7 @@ function findGaps(events) {
   const covered = (c, s, e) => (cover[c] || []).some(([a, b]) => a <= s + 60000 && b >= e - 60000);
   const gaps = new Map(), now = Date.now();
   for (const e of events) {
-    if (isBlocker(e) || isAway(e) || e.allDay || e.free || e.e <= now) continue;
+    if (e.personal || isBlocker(e) || isAway(e) || e.allDay || e.free || e.e <= now) continue;
     const miss = [...blockCals].filter(c => !e.cals.includes(c) && S.cals.some(x => x.id === c && x.on !== false) && !covered(c, e.s, e.e));
     if (miss.length) gaps.set(e, miss);
   }
@@ -80,7 +80,62 @@ function dedupe(list) {
   }
   return [...seen.values()].sort((a, b) => a.s - b.s);
 }
+/* ---------- built-in Personal calendar (stored in Supabase) ---------- */
+const PERSONAL = { id: 'personal', name: 'Personal', color: '#d9480f', builtin: true };
+const allCals = () => [PERSONAL, ...S.cals];
+const hasCals = () => S.cals.length > 0 || S.pev.length > 0;
+const pevFromRow = r => ({ id: r.id, title: r.title, loc: r.location || '', notes: r.notes || '', allDay: !!r.all_day, date: r.start_date, start: r.start_time || '09:00', end: r.end_time || '10:00', days: r.repeat_days || null, until: r.repeat_until || null, skip: r.skip_dates || [] });
+const pevToRow = v => ({ id: v.id, title: v.title, location: v.loc, notes: v.notes, all_day: v.allDay, start_date: v.date, start_time: v.allDay ? null : v.start, end_time: v.allDay ? null : v.end, repeat_days: v.days && v.days.length ? v.days : null, repeat_until: v.until || null, skip_dates: v.skip || [] });
+/* Occurrences of personal events overlapping [from, to), shaped like calendar events. */
+function expandPersonal(from, to) {
+  const out = [];
+  for (const v of S.pev) {
+    const first = fromKey(v.date), last = v.days ? (v.until ? fromKey(v.until) : new Date(to)) : first;
+    for (let d = new Date(Math.max(first, addDays(new Date(from), -1))); d <= last && d < new Date(to); d = addDays(d, 1)) {
+      const k = keyOf(d);
+      if (v.days ? !v.days.includes(d.getDay()) : k !== v.date) continue;
+      if (v.skip.includes(k)) continue;
+      let s, e;
+      if (v.allDay) { s = d.getTime(); e = addDays(d, 1).getTime(); }
+      else {
+        const [sh, sm] = v.start.split(':').map(Number), [eh, em] = v.end.split(':').map(Number);
+        s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm).getTime();
+        e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), eh, em).getTime(); if (e <= s) e += 864e5;
+      }
+      if (e <= +from || s >= +to) continue;
+      out.push({ cal: 'personal', cals: ['personal'], title: v.title, loc: v.loc, allDay: v.allDay, s, e, free: false, status: '', personal: true, pid: v.id, occ: k });
+    }
+  }
+  return out;
+}
+function rebuildEvents() {
+  const a = todayD(), b = addDays(a, 8);
+  S.events = [...S.remote, ...expandPersonal(a, b)].sort((x, y) => x.s - y.s);
+}
+async function loadPersonal() {
+  const { data, error } = await sb.from('personal_events').select('*').order('start_date');
+  if (error) { S.pevMissing = /personal_events|PGRST205|42P01|does not exist|schema cache/i.test(error.message + ' ' + error.code); return; }
+  S.pevMissing = false; S.pev = data.map(pevFromRow); cache.set('pev', S.pev);
+}
+function personalChanged() { cache.set('pev', S.pev); rebuildEvents(); renderAll(); renderCal(); }
+async function savePersonal(v) {
+  const i = S.pev.findIndex(x => x.id === v.id); const before = i >= 0 ? S.pev[i] : null;
+  if (i >= 0) S.pev[i] = v; else S.pev.push(v);
+  personalChanged();
+  const { error } = await sb.from('personal_events').upsert(pevToRow(v));
+  if (error) { if (before) S.pev[i] = before; else S.pev = S.pev.filter(x => x.id !== v.id); personalChanged(); banner(/personal_events|schema cache/i.test(error.message) ? 'The Personal calendar table is not set up yet. Run the SQL from the setup notes in Supabase.' : 'Could not save: ' + error.message); return false; }
+  return true;
+}
+async function deletePersonal(id) {
+  const v = S.pev.find(x => x.id === id); if (!v) return;
+  S.pev = S.pev.filter(x => x.id !== id); personalChanged();
+  const { error } = await sb.from('personal_events').delete().eq('id', id);
+  if (error) { S.pev.push(v); personalChanged(); banner('Could not delete: ' + error.message); return; }
+  toast('Event deleted.', () => savePersonal(v));
+}
+
 async function fetchEvents(from, to) {
+  if (!S.cals.length) return { events: [], errors: {}, at: Date.now() };
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
   const { data } = await sb.auth.getSession();
   const r = await fetch(`/api/calendars?from=${from}&to=${to}&tz=${encodeURIComponent(tz)}`, { headers: { Authorization: 'Bearer ' + data.session.access_token } });
@@ -90,15 +145,15 @@ async function fetchEvents(from, to) {
 }
 async function refreshCalendars() {
   if (!S.session) return;
-  if (!S.cals.length) { S.events = []; S.calState = 'ready'; renderAll(); return; }
+  if (!S.cals.length) { S.remote = []; rebuildEvents(); S.calState = 'ready'; renderAll(); return; }
   S.calState = 'loading'; renderAgenda();
   const from = todayD().getTime(), to = addDays(todayD(), 8).getTime();
   try {
     const res = await fetchEvents(from, to);
     S.calErr = res.errors;
-    S.events = res.events;
+    S.remote = res.events; rebuildEvents();
     S.calAt = res.at;
-    cache.set('events', { events: S.events, at: S.calAt, day: todayK() });
+    cache.set('events', { events: S.remote, at: S.calAt, day: todayK() });
     S.calState = 'ready';
   } catch (e) {
     S.calState = S.events.length ? 'ready' : 'error';
@@ -110,7 +165,7 @@ async function refreshCalendars() {
 
 /* ---------- rendering ---------- */
 const areaById = id => S.areas.find(a => a.id === id) || { id: '', name: 'Unfiled', color: '#8a949c' };
-const calById = id => S.cals.find(c => c.id === id) || { name: 'Calendar', color: '#8a949c' };
+const calById = id => allCals().find(c => c.id === id) || { name: 'Calendar', color: '#8a949c' };
 const openTasks = () => S.tasks.filter(t => !t.done);
 function renderHeader() {
   $('today').textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -119,7 +174,7 @@ function renderHeader() {
   const gapN = S.cals.length ? findGaps(S.events).size : 0;
   const ot = openTasks(), due = ot.filter(t => t.due === tk).length, late = ot.filter(t => t.due && t.due < tk).length;
   const bits = [];
-  if (S.cals.length) bits.push(`<b>${left}</b> ${left === 1 ? 'meeting' : 'meetings'} left today`);
+  if (hasCals()) bits.push(`<b>${left}</b> ${left === 1 ? 'meeting' : 'meetings'} left today`);
   bits.push(`<b>${due}</b> ${due === 1 ? 'to-do' : 'to-dos'} due today`);
   if (late) bits.push(`<b class="late">${late} overdue</b>`);
   if (gapN) bits.push(`<button type="button" class="lnk late" id="gapLink">${gapN} ${gapN === 1 ? 'booking needs' : 'bookings need'} an Unavailable</button>`);
@@ -140,7 +195,7 @@ function evRow(ev, now, miss) {
 function renderAgenda() {
   const el = $('agenda');
   $('calNote').textContent = S.calAt ? `Updated ${timeStr(S.calAt)}` : '';
-  if (!S.cals.length) {
+  if (!hasCals()) {
     el.innerHTML = `<div class="empty"><p>No calendars yet. Add the ICS link from each of your Outlook calendars and they'll show here together, color-coded.</p><p><button class="btn pri" id="addCals" type="button">Add calendars</button></p></div>`;
     $('addCals').addEventListener('click', () => openSettings('cal'));
     return;
@@ -175,7 +230,7 @@ function renderWeek() {
     const items = evs.slice(0, 6).map(e => `<li><span class="tm">${dayLevel(e) ? 'All day' : esc(timeStr(e.s))}</span><span class="dot" style="--c:${esc(calById(e.cal).color)}"></span><span class="nm">${esc(e.title)}</span></li>`);
     if (evs.length > 6) items.push(`<li class="note">${evs.length - 6} more</li>`);
     if (due) items.push(`<li class="due">${due} ${due === 1 ? 'to-do' : 'to-dos'} due</li>`);
-    if (!items.length) items.push(`<li class="note">${S.cals.length ? 'Open' : 'No to-dos due'}</li>`);
+    if (!items.length) items.push(`<li class="note">${hasCals() ? 'Open' : 'No to-dos due'}</li>`);
     rows.push(`<div class="day"><div class="dl">${WD[d.getDay()]}<span>${d.getDate()}</span></div><ul>${items.join('')}</ul></div>`);
   }
   $('week').innerHTML = rows.join('');
@@ -342,7 +397,7 @@ function cvTitle() {
 }
 async function cvLoad(force) {
   const [a, b] = cvRange(), key = a.getTime() + '-' + b.getTime(), hit = CV.store[key];
-  if (!S.cals.length) { renderCal(); return; }
+  if (!S.cals.length) { CV.store[key] = { events: [], at: Date.now(), errors: {} }; renderCal(); return; }
   if (hit && !force && Date.now() - hit.at < 10 * 60000) { renderCal(); return; }
   CV.loading = true; renderCal();
   try { const res = await fetchEvents(a.getTime(), b.getTime()); CV.store[key] = { events: res.events, at: Date.now(), errors: res.errors }; CV.err = ''; }
@@ -351,7 +406,7 @@ async function cvLoad(force) {
 }
 function cvEvents() {
   const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
-  return (hit ? hit.events : []).filter(e => e.cals.some(c => !CV.hidden.has(c)));
+  return [...(hit ? hit.events : []), ...expandPersonal(a, b)].sort((x, y) => x.s - y.s).filter(e => e.cals.some(c => !CV.hidden.has(c)));
 }
 const evColor = e => calById(e.cals.find(c => !CV.hidden.has(c)) || e.cal).color;
 function evBtn(cls, e, inner, style) {
@@ -417,11 +472,11 @@ function renderCal() {
   $('cTitle').textContent = cvTitle();
   for (const b of $('cViews').querySelectorAll('[data-v]')) b.setAttribute('aria-pressed', b.dataset.v === CV.view);
   $('cWeekends').setAttribute('aria-pressed', CV.weekends);
-  $('cLegend').innerHTML = S.cals.map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
+  $('cLegend').innerHTML = allCals().filter(c => !c.builtin || S.pev.length).map(c => `<button class="chip${CV.hidden.has(c.id) ? ' off' : ''}" type="button" data-cal="${esc(c.id)}" aria-pressed="${!CV.hidden.has(c.id)}"><span class="dot" style="--c:${esc(c.color)}"></span>${esc(c.name)}</button>`).join('');
   const [a, b] = cvRange(), hit = CV.store[a.getTime() + '-' + b.getTime()];
   const errs = hit ? Object.keys(hit.errors || {}).length : 0;
   const gn = CV.gaps.size;
-  $('cStatus').textContent = !S.cals.length ? 'No calendars yet. Add them in Settings.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : gn ? `${gn} ${gn === 1 ? 'booking is' : 'bookings are'} missing an Unavailable block (marked with !).` : '';
+  $('cStatus').textContent = !hasCals() ? 'No calendars yet. Add them in Settings, or add a Personal event.' : CV.loading ? 'Loading…' : CV.err ? 'Could not load: ' + CV.err : errs ? `${errs} ${errs === 1 ? 'calendar' : 'calendars'} couldn't refresh.` : gn ? `${gn} ${gn === 1 ? 'booking is' : 'bookings are'} missing an Unavailable block (marked with !).` : '';
   $('cStatus').classList.toggle('warnt', !!gn && !CV.loading && !CV.err && !errs);
   const prevScroll = $('tgScroll')?.scrollTop;
   if (CV.view === 'month') $('cBody').innerHTML = renderMonth();
@@ -449,6 +504,8 @@ function showEvent(e) {
   const miss = CV.gaps && CV.gaps.get(e);
   $('evWarn').textContent = miss ? `No Unavailable block on ${calNames(miss)} for this time.` : ''; $('evWarn').hidden = !miss;
   $('evCal').textContent = e.cals.map(c => calById(c).name).join(' + ') + (e.status === 'OOF' ? ' · Out of office' : e.status === 'TENTATIVE' ? ' · Tentative' : e.free ? ' · shown as free' : '');
+  $('evEdit').hidden = !e.personal; $('evSkip').hidden = !(e.personal && S.pev.find(v => v.id === e.pid)?.days);
+  CV.cur = e;
   $('evOv').classList.add('open');
 }
 function setView(v) {
@@ -469,32 +526,67 @@ function isoLocal(dateKey, time) {
   const dt = new Date(y, mo - 1, d, h, mi), off = -dt.getTimezoneOffset();
   return `${dateKey}T${pad(h)}:${pad(mi)}:00${off >= 0 ? '+' : '-'}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
 }
+let neEditing = null;
 function neHelp() {
+  const pers = $('neCal').value === 'personal';
+  $('neRep').hidden = !pers; $('neSubmit').textContent = pers ? 'Save' : 'Open in Outlook';
+  $('neDays').hidden = $('neRepeat').value !== 'weekly'; $('neUntilF').hidden = !$('neRepeat').value;
+  $('neDel').hidden = !neEditing;
+  if (pers) { $('neHelp').textContent = S.pevMissing ? 'One-time setup needed: run the Personal calendar SQL in Supabase first.' : 'Saved in Day Book only. It will not appear in Outlook, and it is never checked for Unavailable blocks.'; return; }
   const c = S.cals.find(x => x.id === $('neCal').value);
   $('neHelp').textContent = !c ? '' : isPersonal(c)
     ? 'Opens Outlook.com (outlook.live.com) with the event filled in. Click Save there.'
     : `Opens Outlook on the web (outlook.office.com) with the event filled in. Check that the account in the top right is ${c.name} before you click Save.`;
 }
-function openNewEvent(start) {
-  if (!S.cals.length) { openSettings('cal'); return; }
+function setDays(days) { for (const b of $('neDays').querySelectorAll('input')) b.checked = days.includes(+b.value); }
+function openNewEvent(start, editId) {
+  const v = editId ? S.pev.find(x => x.id === editId) : null; neEditing = v ? v.id : null;
   const now = new Date(), d = start || new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes() < 30 ? 30 : 60);
-  $('neTitle').value = ''; $('neLoc').value = ''; $('neNotes').value = ''; $('neAll').checked = false;
-  $('neCal').innerHTML = S.cals.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-  const last = cache.get('lastEvCal'); if (last && S.cals.some(c => c.id === last)) $('neCal').value = last;
-  $('neDate').value = keyOf(d); $('neStart').value = hm(d); $('neEnd').value = fromMin(toMin(hm(d)) + 60);
-  for (const el of document.querySelectorAll('.neT')) el.hidden = false;
+  $('neH').textContent = v ? 'Edit personal event' : 'New event';
+  $('neCal').innerHTML = (v ? [PERSONAL] : allCals()).map(c => `<option value="${esc(c.id)}">${esc(c.builtin ? 'Personal (Day Book only)' : c.name)}</option>`).join('');
+  $('neCal').disabled = !!v;
+  const last = cache.get('lastEvCal'); if (!v && last && allCals().some(c => c.id === last)) $('neCal').value = last;
+  $('neTitle').value = v ? v.title : ''; $('neLoc').value = v ? v.loc : ''; $('neNotes').value = v ? v.notes : ''; $('neAll').checked = v ? v.allDay : false;
+  $('neDate').value = v ? v.date : keyOf(d); $('neStart').value = v ? v.start : hm(d); $('neEnd').value = v ? v.end : fromMin(toMin(hm(d)) + 60);
+  const days = v && v.days ? v.days : [];
+  $('neRepeat').value = !days.length ? '' : days.length === 7 ? 'daily' : days.join() === '1,2,3,4,5' ? 'weekdays' : 'weekly';
+  setDays(days.length ? days : [fromKey($('neDate').value).getDay()]); daysTouched = !!days.length; $('neUntil').value = v && v.until ? v.until : '';
+  for (const el of document.querySelectorAll('.neT')) el.hidden = $('neAll').checked;
   neHelp(); $('neOv').classList.add('open'); setTimeout(() => $('neTitle').focus(), 0);
 }
+let daysTouched = false;
+$('neDays').addEventListener('change', () => { daysTouched = true; });
+$('neRepeat').addEventListener('change', () => { if ($('neRepeat').value === 'weekly' && !daysTouched && $('neDate').value) setDays([fromKey($('neDate').value).getDay()]); neHelp(); });
+$('neDate').addEventListener('change', () => { if (!daysTouched && $('neDate').value) setDays([fromKey($('neDate').value).getDay()]); });
+$('neDel').addEventListener('click', () => { const id = neEditing; $('neOv').classList.remove('open'); deletePersonal(id); });
+$('evEdit').addEventListener('click', () => { const e = CV.cur; $('evOv').classList.remove('open'); if (e && e.personal) openNewEvent(null, e.pid); });
+$('evSkip').addEventListener('click', () => {
+  const e = CV.cur; const v = e && S.pev.find(x => x.id === e.pid); if (!v) return;
+  $('evOv').classList.remove('open');
+  const before = { ...v, skip: [...v.skip] };
+  savePersonal({ ...v, skip: [...v.skip, e.occ] }).then(ok => ok && toast(`Removed the ${fromKey(e.occ).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} one only.`, () => savePersonal(before)));
+});
 let neDur = 60;
 $('neStart').addEventListener('focus', () => { neDur = Math.max(15, toMin($('neEnd').value) - toMin($('neStart').value)); });
 $('neStart').addEventListener('change', () => { $('neEnd').value = fromMin(toMin($('neStart').value) + neDur); });
 $('neAll').addEventListener('change', () => { for (const el of document.querySelectorAll('.neT')) el.hidden = $('neAll').checked; });
 $('neCal').addEventListener('change', neHelp);
 $('neCancel').addEventListener('click', () => $('neOv').classList.remove('open'));
-$('neForm').addEventListener('submit', e => {
+$('neForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const c = S.cals.find(x => x.id === $('neCal').value); if (!c) return;
   const date = $('neDate').value; if (!date) return;
+  if ($('neCal').value === 'personal') {
+    const rep = $('neRepeat').value;
+    const days = rep === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : rep === 'weekdays' ? [1, 2, 3, 4, 5] : rep === 'weekly' ? [...$('neDays').querySelectorAll('input:checked')].map(b => +b.value) : null;
+    if (rep === 'weekly' && !days.length) { $('neHelp').textContent = 'Pick at least one day for it to repeat on.'; return; }
+    const old = neEditing ? S.pev.find(x => x.id === neEditing) : null;
+    const v = { id: neEditing || crypto.randomUUID(), title: $('neTitle').value.trim() || 'Untitled', loc: $('neLoc').value.trim(), notes: $('neNotes').value.trim(), allDay: $('neAll').checked, date, start: $('neStart').value || '09:00', end: $('neEnd').value || '10:00', days, until: days ? ($('neUntil').value || null) : null, skip: old ? old.skip : [] };
+    cache.set('lastEvCal', 'personal');
+    $('neOv').classList.remove('open');
+    if (await savePersonal(v)) toast(old ? 'Event updated.' : 'Added to your Personal calendar.');
+    return;
+  }
+  const c = S.cals.find(x => x.id === $('neCal').value); if (!c) return;
   const q = new URLSearchParams({ path: '/calendar/action/compose', rru: 'addevent', subject: $('neTitle').value.trim() });
   if ($('neAll').checked) {
     q.set('startdt', date); q.set('enddt', keyOf(addDays(fromKey(date), 1))); q.set('allday', 'true');
@@ -616,10 +708,13 @@ async function start(session) {
   S.tasks = cache.get('tasks') || []; if (S.tasks.length) S.tasksState = 'cached';
   S.areas = cache.get('areas') || DEFAULT_AREAS;
   S.cals = cache.get('cals') || [];
-  const ev = cache.get('events'); if (ev && ev.day === todayK()) { S.events = ev.events; S.calAt = ev.at; S.calState = 'ready'; }
+  S.pev = cache.get('pev') || [];
+  const ev = cache.get('events'); if (ev && ev.day === todayK()) { S.remote = ev.events; S.calAt = ev.at; S.calState = 'ready'; }
+  rebuildEvents();
   renderAll();
   route();
-  await Promise.all([loadSettings(), loadTasks()]);
+  await Promise.all([loadSettings(), loadTasks(), loadPersonal()]);
+  rebuildEvents();
   renderAll();
   if (!$('calView').hidden) cvLoad();
   refreshCalendars();
@@ -627,12 +722,16 @@ async function start(session) {
     if (p.eventType === 'DELETE') S.tasks = S.tasks.filter(t => t.id !== p.old.id);
     else upsertLocal(fromRow(p.new));
     changed();
+  }).on('postgres_changes', { event: '*', schema: 'public', table: 'personal_events' }, p => {
+    if (p.eventType === 'DELETE') S.pev = S.pev.filter(v => v.id !== p.old.id);
+    else { const v = pevFromRow(p.new), i = S.pev.findIndex(x => x.id === v.id); if (i >= 0) S.pev[i] = v; else S.pev.push(v); }
+    personalChanged();
   }).subscribe();
   setInterval(() => { renderHeader(); renderAgenda(); renderCal(); }, 60000);
   setInterval(() => refreshCalendars(), 15 * 60000);
   let lastDay = todayK();
   setInterval(() => { if (todayK() !== lastDay) { lastDay = todayK(); refreshCalendars(); } }, 60000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { loadTasks(); if (Date.now() - (S.calAt || 0) > 5 * 60000) refreshCalendars(); } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { loadTasks(); loadPersonal().then(personalChanged); if (Date.now() - (S.calAt || 0) > 5 * 60000) refreshCalendars(); } });
 }
 
 (async () => {

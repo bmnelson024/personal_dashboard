@@ -186,3 +186,10 @@ main{grid-template-columns:minmax(0,4fr) minmax(0,3fr) minmax(0,5fr);gap:0 36px}
 #wkSec{grid-column:2;grid-row:1;border-top:0;padding-top:0}
 .colR{grid-column:3;grid-row:1}
 }
+.daypick{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 12px}
+.daypick label{cursor:pointer}
+.daypick input{position:absolute;opacity:0;pointer-events:none}
+.daypick span{display:inline-grid;place-items:center;min-width:48px;min-height:40px;padding:0 10px;border:1px solid var(--rule);border-radius:20px;font-size:14px}
+.daypick input:checked+span{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.daypick input:focus-visible+span{outline:2px solid var(--slate);outline-offset:2px}
+select:disabled{opacity:.7}

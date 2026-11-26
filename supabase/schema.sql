@@ -52,3 +52,27 @@ create policy "own settings" on public.settings for all to authenticated
 do $$ begin
   alter publication supabase_realtime add table public.tasks;
 exception when duplicate_object then null; end $$;
+
+-- Personal calendar kept in Day Book (added Nov 2026).
+create table if not exists public.personal_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  title text not null,
+  location text not null default '',
+  notes text not null default '',
+  all_day boolean not null default false,
+  start_date date not null,
+  start_time text,
+  end_time text,
+  repeat_days int[],
+  repeat_until date,
+  skip_dates date[] not null default '{}',
+  created_at timestamptz not null default now()
+);
+alter table public.personal_events enable row level security;
+drop policy if exists "own personal events" on public.personal_events;
+create policy "own personal events" on public.personal_events for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+do $$ begin
+  alter publication supabase_realtime add table public.personal_events;
+exception when duplicate_object then null; end $$;
