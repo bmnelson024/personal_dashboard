@@ -199,3 +199,12 @@ select:disabled{opacity:.7}
 .join.soon{background:var(--slate);border-color:var(--slate);color:#fff}
 a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .eb.hasjoin b::after{content:" \25B8";font-weight:400;opacity:.6}
+.hrs{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;font-size:14px;margin:0 0 10px}
+.hrs b{font-weight:600}
+.hrs .h{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.hrs .h span{font-variant-numeric:tabular-nums}
+.ftout{margin:6px 0 4px}
+.ftout h3{font-size:14px;margin:12px 0 4px}
+.ftout ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.ftout li{padding:6px 10px;border-radius:6px;background:var(--panel);font-size:14px;white-space:nowrap}
+.ftout .none{color:var(--mute);font-size:14px}

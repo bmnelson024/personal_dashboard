@@ -46,7 +46,7 @@
 <main id="dash">
   <div class="colL">
     <section class="sec" id="agSec" aria-labelledby="agH">
-      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note"><span id="calNote"></span> <button class="lnk" type="button" id="addEvDash">Add event</button> <button class="lnk" type="button" id="expandCal">Open calendar</button></span></div>
+      <div class="sechead"><h2 id="agH">Schedule</h2><span class="note"><span id="calNote"></span> <button class="lnk" type="button" id="findDash">Find open time</button> <button class="lnk" type="button" id="addEvDash">Add event</button> <button class="lnk" type="button" id="expandCal">Open calendar</button></span></div>
       <div id="agenda"></div>
     </section>
     <section class="sec" id="wkSec" aria-labelledby="wkH">
@@ -76,11 +76,13 @@
     <div class="cnav"><button class="btn" type="button" id="cPrev" aria-label="Previous">&#8249;</button><button class="btn" type="button" id="cToday">Today</button><button class="btn" type="button" id="cNext" aria-label="Next">&#8250;</button></div>
     <h2 id="cTitle">Calendar</h2>
     <button class="chip" type="button" id="cWeekends" aria-pressed="false">Weekends</button>
+    <button class="btn" type="button" id="cFind">Find open time</button>
     <button class="btn pri" type="button" id="cNew">New event</button>
     <div class="seg" id="cViews"><button class="chip" type="button" data-v="day">Day</button><button class="chip" type="button" data-v="week">Week</button><button class="chip" type="button" data-v="month">Month</button></div>
   </div>
   <div class="chips" id="cLegend" aria-label="Show or hide calendars"></div>
   <p class="note" id="cStatus"></p>
+  <div class="hrs" id="cHours" aria-label="Meeting hours by calendar"></div>
   <div id="cBody"></div>
 </section>
 </div>
@@ -156,6 +158,24 @@
     <label class="fld">Notes<textarea id="neNotes" placeholder="Optional"></textarea></label>
     <p class="note" id="neHelp"></p>
     <div class="acts"><button class="btn warn" type="button" id="neDel" hidden>Delete</button><span class="sp"></span><button class="btn" type="button" id="neCancel">Cancel</button><button class="btn pri" type="submit" id="neSubmit">Open in Outlook</button></div>
+  </form>
+</div>
+
+<div class="ov" id="ftOv" role="dialog" aria-modal="true" aria-labelledby="ftH">
+  <form class="dlg" id="ftForm">
+    <h2 id="ftH">Find open time</h2>
+    <div class="row3">
+      <label class="fld">Length<select id="ftLen"><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60" selected>1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></label>
+      <label class="fld">When<select id="ftRange"><option value="this">Rest of this week</option><option value="next">Next week</option><option value="two">Next 2 weeks</option></select></label>
+      <label class="fld">Gap around meetings<select id="ftGap"><option value="0">None</option><option value="15">15 minutes</option><option value="30">30 minutes</option></select></label>
+    </div>
+    <div class="row2">
+      <label class="fld">Earliest start<input type="time" id="ftFrom" value="08:00" step="900"></label>
+      <label class="fld">Latest end<input type="time" id="ftTo" value="17:00" step="900"></label>
+    </div>
+    <div class="fld">Count these calendars as busy<div class="daypick" id="ftCals"></div></div>
+    <div id="ftOut" class="ftout"></div>
+    <div class="acts"><button class="btn" type="button" id="ftCopy" hidden>Copy for email</button><span class="sp"></span><button class="btn" type="button" id="ftClose">Close</button><button class="btn pri" type="submit">Find times</button></div>
   </form>
 </div>
 

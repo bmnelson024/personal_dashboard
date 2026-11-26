@@ -506,6 +506,7 @@ function renderCal() {
     else { const inRange = Date.now() >= a.getTime() && Date.now() < b.getTime(); const h = inRange ? new Date().getHours() - 1.5 - GRID_START : 1; sc.scrollTop = Math.max(0, h) * HH; }
     CV.keepScroll = true;
   }
+  renderHours();
 }
 function cvGo(view, date) { if (view) CV.view = view; if (date) CV.date = date; CV.keepScroll = false; cvLoad(); }
 function cvStep(dir) {
@@ -534,6 +535,98 @@ function setView(v) {
   if (cal) { CV.keepScroll = false; cvLoad(); }
 }
 const route = () => setView(location.hash === '#calendar' ? 'calendar' : 'dash');
+
+/* ---------- hours by business ---------- */
+// Meeting hours per calendar for what's on screen. Overlaps on one calendar count once;
+// Unavailable holds, out-of-office, Free and all-day items don't count.
+function hoursByCal(events, a, b) {
+  const per = {};
+  for (const e of events) {
+    if (dayLevel(e) || isBlocker(e) || isAway(e) || e.free) continue;
+    const s = Math.max(e.s, a), en = Math.min(e.e, b); if (en <= s) continue;
+    for (const c of e.cals) (per[c] = per[c] || []).push([s, en]);
+  }
+  const out = {};
+  for (const c in per) {
+    const l = per[c].sort((x, y) => x[0] - y[0]); let tot = 0, cs = -1, ce = -1;
+    for (const [s, e] of l) { if (s > ce) { if (ce > cs) tot += ce - cs; cs = s; ce = e; } else ce = Math.max(ce, e); }
+    if (ce > cs) tot += ce - cs;
+    out[c] = tot / 36e5;
+  }
+  return out;
+}
+function renderHours() {
+  const el = $('cHours'); if (!el) return;
+  let [a, b] = cvRange();
+  if (CV.view === 'month') { a = new Date(CV.date.getFullYear(), CV.date.getMonth(), 1); b = new Date(CV.date.getFullYear(), CV.date.getMonth() + 1, 1); }
+  const hit = cvHit();
+  const evs = [...(hit ? hit.events : []), ...expandPersonal(a, b)].filter(e => e.cals.some(c => !CV.hidden.has(c)));
+  const h = hoursByCal(evs, a.getTime(), b.getTime());
+  const ids = allCals().map(c => c.id).filter(id => h[id] && !CV.hidden.has(id));
+  const label = CV.view === 'day' ? 'Meetings this day' : CV.view === 'week' ? 'Meetings this week' : `Meetings in ${MO[a.getMonth()]}`;
+  const fmt = n => (Math.round(n * 4) / 4).toString().replace(/\.0+$/, '');
+  el.innerHTML = ids.length ? `<b>${label}:</b>` + ids.map(id => `<span class="h"><span class="dot" style="--c:${esc(calById(id).color)}"></span>${esc(calById(id).name)} <span>${fmt(h[id])} h</span></span>`).join('') : '';
+}
+
+/* ---------- find open time ---------- */
+function ftRange() {
+  const t = todayD(), mon = addDays(t, -((t.getDay() + 6) % 7)), v = $('ftRange').value;
+  if (v === 'this') return [t, addDays(mon, 7)];
+  if (v === 'next') return [addDays(mon, 7), addDays(mon, 14)];
+  return [t, addDays(mon, 14)];
+}
+function openFind() {
+  const saved = cache.get('ftPrefs') || {};
+  for (const k of ['ftLen', 'ftRange', 'ftGap', 'ftFrom', 'ftTo']) if (saved[k]) $(k).value = saved[k];
+  const off = new Set(saved.off || []);
+  $('ftCals').innerHTML = allCals().filter(c => !c.builtin || S.pev.length).map(c => `<label><input type="checkbox" value="${esc(c.id)}"${off.has(c.id) ? '' : ' checked'}><span>${esc(c.name)}</span></label>`).join('');
+  $('ftOut').innerHTML = ''; $('ftCopy').hidden = true;
+  $('ftOv').classList.add('open');
+}
+let ftText = '';
+$('ftForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const len = +$('ftLen').value * 60000, gap = +$('ftGap').value * 60000;
+  const [fh, fm] = $('ftFrom').value.split(':').map(Number), [th, tm] = $('ftTo').value.split(':').map(Number);
+  const busyCals = new Set([...$('ftCals').querySelectorAll('input:checked')].map(b => b.value));
+  cache.set('ftPrefs', { ftLen: $('ftLen').value, ftRange: $('ftRange').value, ftGap: $('ftGap').value, ftFrom: $('ftFrom').value, ftTo: $('ftTo').value, off: allCals().map(c => c.id).filter(id => !busyCals.has(id)) });
+  const [a, b] = ftRange();
+  $('ftOut').innerHTML = '<p class="none">Checking your calendars…</p>';
+  let events;
+  try { events = [...(await fetchEvents(a.getTime(), b.getTime())).events, ...expandPersonal(a, b)]; }
+  catch (err) { $('ftOut').innerHTML = `<p class="none">Could not load calendars: ${esc(err.message)}</p>`; return; }
+  const now = Date.now(), days = [], lines = [];
+  for (let d = new Date(a); d < b; d = addDays(d, 1)) {
+    if (!CV.weekends && (d.getDay() === 0 || d.getDay() === 6)) continue;
+    const ds = d.getTime(), de = addDays(d, 1).getTime();
+    let start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), fh, fm).getTime(), end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), th, tm).getTime();
+    start = Math.max(start, Math.ceil((now + 15 * 60000) / 9e5) * 9e5); // nothing in the past; round to the next quarter hour
+    if (end - start < len) continue;
+    const dayEvs = events.filter(x => x.s < de && x.e > ds && !x.free && x.cals.some(c => busyCals.has(c)));
+    if (dayEvs.some(x => isAway(x) && (x.allDay || x.e - x.s >= 6 * 36e5))) continue; // out of office that day
+    const busy = dayEvs.filter(x => !x.allDay).map(x => [x.s - gap, x.e + gap]).sort((p, q) => p[0] - q[0]);
+    const free = []; let cur = start;
+    for (const [s0, e0] of busy) { if (s0 > cur) free.push([cur, Math.min(s0, end)]); cur = Math.max(cur, e0); if (cur >= end) break; }
+    if (cur < end) free.push([cur, end]);
+    const ok = free.filter(([s0, e0]) => e0 - s0 >= len);
+    if (!ok.length) continue;
+    const name = d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const spans = ok.map(([s0, e0]) => `${timeStr(s0)} to ${timeStr(e0)}`);
+    days.push(`<h3>${esc(name)}</h3><ul>${spans.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`);
+    lines.push(`- ${name}: ${spans.join(', ')}`);
+  }
+  const zone = new Intl.DateTimeFormat('en-US', { timeZoneName: 'long' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value || 'my time';
+  ftText = lines.length ? `Here are some times that work for me (${zone.replace(/ Standard| Daylight/, '')}):\n${lines.join('\n')}` : '';
+  $('ftOut').innerHTML = days.length ? days.join('') : '<p class="none">No open slots that long in that range. Try a shorter length, a later end time, or a different week.</p>';
+  $('ftCopy').hidden = !lines.length;
+});
+$('ftCopy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(ftText); toast('Copied. Paste it into your email.'); }
+  catch { toast('Copy was blocked by the browser. Select the times and copy them by hand.'); }
+});
+$('ftClose').addEventListener('click', () => $('ftOv').classList.remove('open'));
+$('cFind').addEventListener('click', openFind);
+$('findDash').addEventListener('click', openFind);
 
 /* ---------- new event (hands off to Outlook on the web) ---------- */
 const isPersonal = c => /outlook\.live\.com|hotmail|live\.com/i.test(c.url || '');
@@ -705,13 +798,13 @@ $('areaSave').addEventListener('click', async () => {
 $('signOut').addEventListener('click', async () => { await sb.auth.signOut(); try { localStorage.clear(); } catch {} location.reload(); });
 $('refresh').addEventListener('click', () => { refreshCalendars(); if (!$('calView').hidden) { CV.store = {}; CV.keepScroll = true; cvLoad(true); } });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); $('evOv').classList.remove('open'); $('neOv').classList.remove('open'); }
+  if (e.key === 'Escape') { closeEditor(); $('setOv').classList.remove('open'); $('evOv').classList.remove('open'); $('neOv').classList.remove('open'); $('ftOv').classList.remove('open'); }
   if (!$('calView').hidden && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !e.metaKey && !e.ctrlKey && !document.querySelector('.ov.open')) {
     if (e.key === 'ArrowLeft') cvStep(-1); else if (e.key === 'ArrowRight') cvStep(1); else if (e.key === 't') cvGo(null, todayD()); else if (e.key === 'd') cvGo('day'); else if (e.key === 'w') cvGo('week'); else if (e.key === 'm') cvGo('month');
   }
   if ((e.key === 'n' || e.key === 'N') && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !$('app').hidden) { e.preventDefault(); $('q').focus(); }
 });
-for (const ov of ['edOv', 'setOv', 'evOv', 'neOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
+for (const ov of ['edOv', 'setOv', 'evOv', 'neOv', 'ftOv']) $(ov).addEventListener('click', e => { if (e.target.id === ov) { $(ov).classList.remove('open'); if (ov === 'edOv') editing = null; } });
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault(); $('lgErr').hidden = true;
   const { error } = await sb.auth.signInWithPassword({ email: $('lgEmail').value.trim(), password: $('lgPass').value });

@@ -1,6 +1,6 @@
 // App shell cache so the dashboard opens instantly and works offline.
 // Data calls (/api, Supabase) always go to the network.
-const VERSION = 'daybook-v18';
+const VERSION = 'daybook-v19';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/vendor/supabase-2.45.4.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', e => {
